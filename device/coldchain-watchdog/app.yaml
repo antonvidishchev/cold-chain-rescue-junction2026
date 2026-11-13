@@ -1,0 +1,6 @@
+name: ColdChain Watchdog
+description: "Independent fridge watchdog for ColdChain Rescue: Modulino Thermo + Buzzer, local alarm, telemetry to the backend"
+version: "0.1.0"
+icon: 🧊
+ports: []
+bricks: []

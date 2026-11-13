@@ -1,0 +1,7 @@
+[
+  {"product_id": "insulin-aspart", "location_id": "fridge-a", "quantity": 40, "units": 4},
+  {"product_id": "mmr-vaccine", "location_id": "fridge-a", "quantity": 30, "units": 3},
+  {"product_id": "influenza-vaccine", "location_id": "fridge-a", "quantity": 60, "units": 6},
+  {"product_id": "pcr-reagent", "location_id": "fridge-a", "quantity": 10, "units": 2},
+  {"product_id": "insulin-aspart", "location_id": "fridge-b", "quantity": 20, "units": 2}
+]

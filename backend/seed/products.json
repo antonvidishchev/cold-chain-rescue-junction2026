@@ -1,0 +1,10 @@
+[
+  {"id": "insulin-aspart", "name": "Insulin aspart (pens)", "min_c": 2.0, "max_c": 8.0, "max_excursion_minutes": 60,
+   "notes": "Unopened: 2-8 C, do not freeze. Demo values - always follow the product SmPC."},
+  {"id": "mmr-vaccine", "name": "MMR vaccine", "min_c": 2.0, "max_c": 8.0, "max_excursion_minutes": 30,
+   "notes": "Protect from light. Demo values."},
+  {"id": "influenza-vaccine", "name": "Influenza vaccine", "min_c": 2.0, "max_c": 8.0, "max_excursion_minutes": 30,
+   "notes": "Do not freeze. Demo values."},
+  {"id": "pcr-reagent", "name": "PCR master mix", "min_c": 2.0, "max_c": 6.0, "max_excursion_minutes": 15,
+   "notes": "Lab reagent, tighter range. Demo values."}
+]

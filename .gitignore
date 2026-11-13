@@ -1,0 +1,28 @@
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+*.db
+*.sqlite3
+
+# Node
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Arduino
+device/**/build/

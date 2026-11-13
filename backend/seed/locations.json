@@ -1,0 +1,8 @@
+[
+  {"id": "fridge-a", "name": "Pharmacy Fridge A", "kind": "fridge", "address": "Main pharmacy, front room",
+   "min_c": 2.0, "max_c": 8.0, "capacity_units": 20, "monitored": true},
+  {"id": "fridge-b", "name": "Backup Fridge B", "kind": "backup_fridge", "address": "Main pharmacy, back room",
+   "min_c": 2.0, "max_c": 8.0, "capacity_units": 8},
+  {"id": "clinic-c", "name": "Partner Clinic C", "kind": "partner_site", "address": "Otaniemi health centre, 3 km",
+   "min_c": 3.0, "max_c": 5.0, "capacity_units": 15}
+]

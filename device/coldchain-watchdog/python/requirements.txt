@@ -1,0 +1,2 @@
+# No third-party dependencies: HTTP uses the standard library.
+# arduino.app_utils is provided by the Uno Q App Lab runtime.
