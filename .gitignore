@@ -32,6 +32,8 @@ local.settings.json
 /infra/
 .copilot-azure/
 .azure-private/
+/arduino-developer.md
+/arduino_developer.md
 
 # Arduino
 device/**/build/
