@@ -13,6 +13,15 @@ Built at **Junction 2026** (Espoo). Tracks: **Hardware · Healthcare · Agentic 
 
 ---
 
+## Azure backend
+
+The new Azure Functions/Table Storage backend is separate from the original
+SQLite prototype. See [backend setup and validation](backend/README.md) and
+[cloud API contracts](backend/CLOUD_API.md). Run `function_app.py` through Functions
+Core Tools for cloud behaviour; `app.main:app` remains the legacy local backend.
+The existing frontend and device application are unchanged. The new static
+frontend has its own `static-frontend/` directory and is not implemented yet.
+
 ## Why
 
 - **Cold-chain failures are expensive and dangerous.** Vaccines, insulin,

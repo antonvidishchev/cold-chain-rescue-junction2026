@@ -1,0 +1,23 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "STORAGE_CONNECTION_STRING": "UseDevelopmentStorage=true",
+    "ImageStorage": "UseDevelopmentStorage=true",
+    "IMAGE_QUEUE_NAME": "image-analysis",
+    "IMAGE_CONTAINER": "images",
+    "COLDCHAIN_DEVICE_KEYS": "{}",
+    "COLDCHAIN_DEVICE_FUNCTION_KEY": "",
+    "COLDCHAIN_OPERATOR_KEY": "",
+    "FOUNDRY_ENDPOINT": "",
+    "FOUNDRY_VISION_DEPLOYMENT": "",
+    "MAX_IMAGE_BYTES": "5242880",
+    "VAPID_PUBLIC_KEY": "",
+    "VAPID_PRIVATE_KEY": "",
+    "VAPID_SUBJECT": ""
+  },
+  "Host": {
+    "CORS": "http://localhost:5173,http://localhost:5174"
+  }
+}
