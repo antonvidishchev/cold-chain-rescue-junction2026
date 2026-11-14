@@ -1,60 +1,69 @@
 # ColdChain Rescue
 
-> **The fridge is warming. Who needs to act, and where can the stock go?**
+> **Zero trust. Zero cloud. Zero Vaccines lost.**
 
-ColdChain Rescue coordinates the response to a failing medicine fridge. An
-independent hardware watchdog sits next to the fridge. It detects temperature
-excursions, power loss and tampering, sounds a local alarm, escalates to the
-right people until someone acknowledges, and proposes a transfer of the stock
-to available storage. The transfer respects explicit capacity limits and each
-product's storage instructions, and a human approves it.
+ColdChain Rescue is an independent hardware watchdog sits on edge colocated with fridges. 
+It detects:
+* temperature excursions
+* power loss
+* tampering
+Sounds a local alarm and escalates to the right people until someone acknowledges.
+And choose an action like a transfer of the stock to available storage.
+The transfer respects explicit capacity limits and each product's storage instructions.
 
 Built at **Junction 2026** (Espoo). Tracks: **Hardware · Healthcare · Agentic AI**.
 
 ---
 
-## Azure backend
+## Tech stack
 
-The new Azure Functions/Table Storage backend is separate from the original
-SQLite prototype. See [backend setup and validation](backend/README.md) and
-[cloud API contracts](backend/CLOUD_API.md). Run `function_app.py` through Functions
-Core Tools for cloud behaviour; `app.main:app` remains the legacy local backend.
-The existing frontend and device application are unchanged. The new static
-frontend has its own `static-frontend/` directory and is not implemented yet.
+Arduino hardware kit based on NEO Q used for edge devices.
+Azure cloud infrastructure is used for control panel applications.
+Python for Arduino and backend, react for frontend.
 
-## Why
+## The problem
 
 - **Cold-chain failures are expensive and dangerous.** Vaccines, insulin,
   biologics and many reagents must stay within a narrow range (often
   +2 °C … +8 °C). A fridge that fails overnight can destroy thousands of euros
   of stock. Worse, the stock may still get used without anyone knowing.
-- **Smart fridges get hacked.** Connected fridges in Europe have been reported
+- **Fridges hardware get hacked.** Connected fridges in Europe have been reported
   compromised. A fridge that reports "4 °C, all fine" while it is actually
   warming is worse than one with no monitoring at all.
 - **Monitoring alone is familiar.** Data loggers already exist. The hard part
   is the *coordinated response*: who is told, who confirms, where the stock
   goes, and whether that place has room and the right conditions.
 
-## What it does
+## Our solution
 
 ```
-detect  ──►  alarm locally  ──►  escalate & acknowledge  ──►  plan transfer  ──►  human approves
+Detect  ──►  Alarm locally  ──►  Escalate & acknowledge  ──►  Plan transfer  ──►  human approves
 ```
 
 1. **Detect.** The Uno Q watchdog reads its own temperature sensor every few
    seconds and evaluates it against the **storage range of the products
    actually in the fridge**.
+   <img width="1280" height="780" alt="image" src="https://github.com/user-attachments/assets/74d0a703-ae19-4c9f-8df4-121ea2f0746d" />
+
 2. **Alarm locally.** If the fridge holds stock and is outside the range for
    longer than the grace period, the on-board buzzer sounds. This works even
    when the network is down.
-3. **Escalate & acknowledge.** The backend raises an alert on the dashboard.
+   <img width="1280" height="821" alt="image" src="https://github.com/user-attachments/assets/9f1e9a4e-8826-4e2a-a40c-3ad8264dbe8c" />
+
+4. **Escalate & acknowledge.** The backend raises an alert on the dashboard.
    Staff acknowledge it, which silences the buzzer and records who took
    ownership.
-4. **Plan a transfer.** If the cooling cannot be restored (for example, the
+   <img width="3192" height="2006" alt="image" src="https://github.com/user-attachments/assets/f3aa8301-6471-4b29-9b10-85968e8f5188" />
+
+   <img width="1630" height="1387" alt="image" src="https://github.com/user-attachments/assets/b6b222c8-33e6-4e93-a47d-bed99a054cae" />
+
+5. **Plan a transfer.** If the cooling cannot be restored (for example, the
    power is out and the backup is not holding), ColdChain Rescue proposes
    moving the stock to alternative storage. It checks free capacity and
    whether each product's range is compatible with the target's range.
-5. **Human approval.** Nothing moves until a person approves the plan.
+   <img width="1280" height="796" alt="image" src="https://github.com/user-attachments/assets/cb468988-640c-4eec-beac-a063a3346437" />
+
+6. **Human approval.** Nothing moves until a person approves the plan.
 
 ### Independent watchdog & tamper detection
 
@@ -102,8 +111,9 @@ flowchart LR
 | Part | Tech | Role |
 | --- | --- | --- |
 | `device/coldchain-watchdog` | Arduino App Lab app for **Uno Q** (sketch + Python, WebUI brick) | Holds the fridge inventory and nearby clinics, reads the sensor, reacts to simulated events with buzzer patterns and LED-matrix messages, serves a REST API on port 7000, reports events through backend stubs |
-| `backend` | Python 3.12+, **FastAPI**, SQLModel/SQLite | Collects telemetry, evaluates thresholds and tamper rules, manages alerts, inventory, capacity and transfer plans, pushes live updates |
-| `frontend` | **React + Vite + TypeScript**, Tailwind, Recharts | Dashboard (fridges, live temperature, alerts, transfer plans) and the simulator panel used in the demo |
+| `backend` | Python 3.12+, **FastAPI**, Azure Functions & Table storage | Collects telemetry, evaluates thresholds and tamper rules, manages alerts, inventory, capacity and transfer plans, pushes live updates |
+| `frontend` | **React + Vite + TypeScript**, Tailwind, Recharts | Runs locally. Dashboard (fridges, live temperature, alerts, transfer plans) and the simulator panel used in the demo |
+| `static-frontend` | **React + Vite + TypeScript**, Tailwind, Recharts | Runs in the cloud. Dashboard (fridges, live temperature, alerts, transfer plans) and the simulator panel used in the demo |
 
 The detailed data contracts and state machine are in
 [docs/architecture.md](docs/architecture.md).
