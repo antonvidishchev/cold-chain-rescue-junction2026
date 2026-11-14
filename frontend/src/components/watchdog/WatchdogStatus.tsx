@@ -7,6 +7,10 @@ const CAMERA_LABELS: Record<CameraFrame['frame'], string> = {
   fridge_door_open: 'Door open',
   fridge_heating: 'Warming',
   fridge_power_outage: 'Power out',
+  fridge_empty_normal: 'Empty',
+  fridge_empty_door_open: 'Empty · door open',
+  fridge_empty_heating: 'Empty · warming',
+  fridge_empty_power_outage: 'Empty · power out',
 }
 
 const ALL_FRAMES = Object.keys(CAMERA_LABELS) as CameraFrame['frame'][]

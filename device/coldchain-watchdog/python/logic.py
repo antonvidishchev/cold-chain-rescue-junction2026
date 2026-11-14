@@ -48,11 +48,12 @@ TAMPER_TOLERANCE_C = 2.0  # max |Arduino - fridge screen| before the alarm
 FRIDGE_POWER_NORMAL_W = 85.0
 FRIDGE_POWER_DEFROST_W = 320.0
 
-# Simulated fridge camera: stills served from assets/camera/<frame>.jpg.
-CAMERA_NORMAL = "fridge_normal"
-CAMERA_DOOR_OPEN = "fridge_door_open"
-CAMERA_HEATING = "fridge_heating"
-CAMERA_POWER_OUTAGE = "fridge_power_outage"
+# Simulated fridge camera: stills served from assets/camera/<frame>.jpg,
+# named fridge_[empty_]<scene> depending on whether the fridge holds stock.
+CAMERA_NORMAL = "normal"
+CAMERA_DOOR_OPEN = "door_open"
+CAMERA_HEATING = "heating"
+CAMERA_POWER_OUTAGE = "power_outage"
 
 COMMANDS = ("unfreeze", "power_outage", "doors_open", "hack_fridge", "empty", "fill", "reset")
 
@@ -108,6 +109,8 @@ class Watchdog:
         self.knob_steps: int = 0  # clockwise detents accumulated in the current gesture
         self.knob_last_ts: float = 0.0
         self.ack_message_until: float = 0.0
+        self.power_out: bool = False  # mains power lost until reset
+        self.defrosting: bool = False  # allowed unfreeze of an empty fridge, until reset
 
     # ----- state -------------------------------------------------------
     @property
@@ -226,13 +229,15 @@ class Watchdog:
         temperature, only the Arduino sensor reveals the problem.
         """
         kind = self.alarm["kind"] if self.alarm else None
-        if kind == "power_outage":
-            return CAMERA_POWER_OUTAGE
-        if self.doors_open():
-            return CAMERA_DOOR_OPEN
-        if kind == "unfreeze":
-            return CAMERA_HEATING
-        return CAMERA_NORMAL
+        if self.power_out or kind == "power_outage":
+            scene = CAMERA_POWER_OUTAGE
+        elif self.doors_open():
+            scene = CAMERA_DOOR_OPEN
+        elif kind == "unfreeze" or self.defrosting:
+            scene = CAMERA_HEATING
+        else:
+            scene = CAMERA_NORMAL
+        return f"fridge_{scene}" if self.stocked else f"fridge_empty_{scene}"
 
     def snapshot(self) -> dict:
         now = self.clock()
@@ -329,6 +334,7 @@ class Watchdog:
 
     def _cmd_unfreeze(self) -> Outcome:
         if not self.stocked:
+            self.defrosting = True
             msg = "Unfreeze allowed: the fridge is empty"
             self._log("unfreeze_allowed", msg)
             return Outcome("unfreeze", msg, stubs=[("report_unfreeze_allowed", {})])
@@ -379,6 +385,7 @@ class Watchdog:
         }
 
     def _cmd_power_outage(self) -> Outcome:
+        self.power_out = True
         assessment = self.assess_power_outage()
         if assessment is None:
             msg = "Power outage with an empty fridge: nothing to do"
@@ -458,12 +465,22 @@ class Watchdog:
         return Outcome("fill", msg, stubs=[("sync_inventory", payload)])
 
     def _resolve_by_knob(self) -> Outcome:
-        """Second clockwise turn after the acknowledgement: protocol followed, clear the alarm."""
+        """Second clockwise turn after the acknowledgement: protocol followed, clear the alarm.
+
+        For a power outage the protocol moves the stock to other clinics, so the
+        fridge ends up empty (and stays dark until the power is back / reset).
+        """
         alarm = self.alarm
         now = self.clock()
         self._clear_alarms()
         self.ack_message_until = now + ACK_MESSAGE_SECONDS
         msg = f"Protocol followed, alarm resolved at the fridge (knob): {alarm['title']}"
+        stubs: list[tuple[str, dict[str, Any]]] = []
+        if alarm["kind"] == "power_outage" and self.stocked:
+            moved = [{"id": m["id"], "quantity": m["quantity"]} for m in self.stocked_items()]
+            self.inventory = []
+            msg += f". Stock moved to other clinics: {len(moved)} medicines, fridge is now empty"
+            stubs.append(("sync_inventory", {"inventory": [], "transferred": moved}))
         self._log("alarm_resolved", msg)
         payload = {
             "alarm_kind": alarm["kind"],
@@ -476,7 +493,7 @@ class Watchdog:
             msg,
             pattern=PATTERN_ACK,
             display=("text", RESOLVED_TEXT),
-            stubs=[("report_alarm_resolved", payload)],
+            stubs=[("report_alarm_resolved", payload), *stubs],
         )
 
     def _clear_alarms(self) -> None:
@@ -489,6 +506,8 @@ class Watchdog:
 
     def _cmd_reset(self) -> Outcome:
         self._clear_alarms()
+        self.power_out = False
+        self.defrosting = False
         msg = "Alarms cleared by operator"
         self._log("reset", msg)
         return Outcome("reset", msg, pattern=PATTERN_STOP, display=("temp", ""))

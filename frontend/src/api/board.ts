@@ -85,7 +85,7 @@ export interface BoardAlarm extends Partial<Omit<Assessment, 'protocol' | 'proto
 }
 
 export interface CameraFrame {
-  frame: 'fridge_normal' | 'fridge_door_open' | 'fridge_heating' | 'fridge_power_outage'
+  frame: `fridge_${'' | 'empty_'}${'normal' | 'door_open' | 'heating' | 'power_outage'}`
   url: string
   simulated: boolean
 }

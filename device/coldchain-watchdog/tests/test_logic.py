@@ -276,7 +276,7 @@ def test_second_knob_turn_resolves_alarm(wd, clock):
     out = turn(wd, clock, KNOB_ACK_STEPS)
     assert out is not None and out.command == "knob_resolve"
     assert out.pattern == PATTERN_ACK and out.display == ("text", "DONE")
-    assert [s for s, _ in out.stubs] == ["report_alarm_resolved"]
+    assert [s for s, _ in out.stubs] == ["report_alarm_resolved", "sync_inventory"]
     assert wd.alarm is None and wd.idle_display() == ("temp", "")
     assert wd.events[0]["kind"] == "alarm_resolved"
     clock.t += 6
@@ -351,10 +351,13 @@ def test_camera_power_outage_outranks_doors(wd):
     assert frame(wd) == "fridge_power_outage"
 
 
-def test_camera_power_outage_with_empty_fridge_stays_normal(wd):
+def test_camera_power_outage_with_empty_fridge(wd):
     wd.handle("empty")
     wd.handle("power_outage")
-    assert frame(wd) == "fridge_normal"
+    assert wd.alarm is None
+    assert frame(wd) == "fridge_empty_power_outage"
+    wd.handle("reset")
+    assert frame(wd) == "fridge_empty_normal"
 
 
 def test_camera_heating_for_unfreeze_alarm(wd):
@@ -377,10 +380,56 @@ def test_camera_keeps_alarm_frame_until_resolved(wd, clock):
     clock.t += 6
     turn(wd, clock, KNOB_ACK_STEPS)
     assert wd.alarm is None
-    assert frame(wd) == "fridge_normal"
+    assert frame(wd) == "fridge_empty_power_outage"  # stock moved, power still out
 
 
 def test_camera_reset_returns_to_normal(wd):
     wd.handle("unfreeze")
     wd.handle("reset")
     assert frame(wd) == "fridge_normal"
+
+
+def test_camera_follows_empty_and_fill(wd):
+    wd.handle("empty")
+    assert frame(wd) == "fridge_empty_normal"
+    wd.handle("doors_open")
+    assert frame(wd) == "fridge_empty_door_open"
+    wd.handle("fill")
+    assert frame(wd) == "fridge_door_open"
+
+
+def test_camera_empty_fridge_defrosts_after_allowed_unfreeze(wd):
+    wd.handle("empty")
+    wd.handle("unfreeze")
+    assert wd.alarm is None
+    assert frame(wd) == "fridge_empty_heating"
+    wd.handle("reset")
+    assert frame(wd) == "fridge_empty_normal"
+
+
+def test_resolving_power_outage_moves_stock_out(wd, clock):
+    wd.handle("power_outage")
+    turn(wd, clock, KNOB_ACK_STEPS)
+    assert wd.stocked  # acknowledging alone keeps the stock
+    clock.t += 6
+    out = turn(wd, clock, KNOB_ACK_STEPS)
+    assert out.command == "knob_resolve"
+    assert not wd.stocked and wd.inventory_summary()["units"] == 0
+    stubs = dict(out.stubs)
+    assert stubs["sync_inventory"]["inventory"] == []
+    assert len(stubs["sync_inventory"]["transferred"]) == 16
+    assert "moved to other clinics" in wd.events[0]["message"]
+    wd.handle("reset")
+    assert frame(wd) == "fridge_empty_normal"
+    wd.handle("fill")
+    assert frame(wd) == "fridge_normal"
+
+
+def test_resolving_other_alarms_keeps_stock(wd, clock):
+    wd.handle("unfreeze")
+    turn(wd, clock, KNOB_ACK_STEPS)
+    clock.t += 6
+    out = turn(wd, clock, KNOB_ACK_STEPS)
+    assert out.command == "knob_resolve"
+    assert wd.stocked
+    assert [s for s, _ in out.stubs] == ["report_alarm_resolved"]
