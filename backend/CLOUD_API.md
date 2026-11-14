@@ -125,11 +125,15 @@ The authenticated watchdog envelope also supports:
   (`power_outage`, `fridge_tamper`, `unfreeze`), nullable `code` (P1–P4/H1), `doors`,
   and `acknowledged_by:"knob"`. Acknowledges matching active incidents at that device's
   location. Door-only gestures may have null kind/code.
-- POST `/events/alarm-resolved`, event `alarm_resolved`: non-null `alarm_kind`, nullable
-  `code`, `acknowledged_at` (Unix seconds or null), and `resolved_by:"knob"`.
-  Records `device_resolved_at/by` on matching incidents and an audit event. **Does not
-  set recovered_at, restore power, certify stock safety, or close measured alarms.**
-  Unfreeze events without a corresponding incident remain visible in event history.
+- POST `/events/alarm-resolved`, event `alarm_resolved`: nullable `alarm_kind`, nullable
+  `code`, `acknowledged_at` (Unix seconds or null), optional `doors` (default false), and
+  `resolved_by` — `"knob"` (second knob turn: protocol followed) or `"reset"` (operator
+  cleared all alarms). At least one of `alarm_kind` or `doors` is required. Resolves every
+  matching unresolved incident at that device's location (`DOORS_OPEN` too when `doors`):
+  sets `status:"resolved"`, `resolved_at/by`, `device_resolved_at/by`, and `recovered_at`
+  if not yet set, so the location's alarm state drops back. A `reset` of a power outage also
+  marks the location powered again. This is operator testimony; it does not certify stock
+  safety. Unfreeze events without a corresponding incident remain visible in event history.
 
 Nested telemetry accepts optional `fridge_display_temp_c`; readings retain it and
 `humidity`. Only fresh telemetry updates the clinic's `reported_temp_c` and

@@ -140,6 +140,27 @@ def test_reset_clears_alarm(wd):
     assert wd.alarm is None and out.pattern == PATTERN_STOP and out.display == ("temp", "")
 
 
+def test_reset_reports_active_alarm_resolved(wd, clock):
+    wd.handle("power_outage")
+    turn(wd, clock, KNOB_ACK_STEPS)
+    out = wd.handle("reset")
+    assert out.stubs == [("report_alarm_resolved", {
+        "alarm_kind": "power_outage", "code": "P1", "acknowledged_at": clock.t,
+        "doors": False, "resolved_by": "reset",
+    })]
+
+
+def test_reset_reports_doors_only(wd):
+    wd.handle("doors_open")
+    (name, payload), = wd.handle("reset").stubs
+    assert name == "report_alarm_resolved"
+    assert payload["alarm_kind"] is None and payload["doors"] is True
+
+
+def test_reset_without_alarm_reports_nothing(wd):
+    assert wd.handle("reset").stubs == []
+
+
 def test_unknown_command(wd):
     with pytest.raises(ValueError):
         wd.handle("self_destruct")
@@ -168,6 +189,24 @@ def test_hacked_fridge_raises_h1_alarm_once(wd):
     assert wd.alarm["kind"] == "fridge_tamper" and wd.alarm["protocol"] == "H1"
     assert wd.check_fridge_tamper() is None  # raised only once
     assert wd.snapshot()["fridge_mismatch_c"] == pytest.approx(-18.0)
+
+
+def test_hack_warms_fridge_and_raises_h1_at_demo_temperature(wd):
+    wd.update_reading(2.0, 40.0)  # board offset to fridge level for the demo
+    wd.handle("hack_fridge")
+    assert wd.check_fridge_tamper() is None  # screen 4.0 vs sensor 2.0: not yet
+    wd.clock.t += 10
+    wd.update_reading(2.0, 40.0)
+    assert wd.temp_c == pytest.approx(12.0) and wd.raw_temp_c == pytest.approx(2.0)
+    assert wd.fridge_state()["display_temp_c"] == 4.0
+    out = wd.check_fridge_tamper()
+    assert out is not None and out.display == ("alarm", "H1")
+    wd.clock.t += 1000
+    wd.update_reading(2.0, 40.0)
+    assert wd.temp_c == pytest.approx(12.0)  # warming is capped
+    wd.handle("reset")
+    wd.update_reading(2.0, 40.0)
+    assert wd.temp_c == pytest.approx(2.0)
 
 
 def test_small_mismatch_is_tolerated(wd):

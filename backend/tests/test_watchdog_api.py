@@ -373,20 +373,46 @@ def test_fridge_display_telemetry_and_stale_reading(cloud):
     assert location['reported_temp_c'] == 4.0
 
 
-def test_knob_completion_is_not_sensor_recovery(cloud):
+def alarm_state(client):
+    return next(x for x in client.get('/api/clinics').json() if x['id']=='fridge-a')['alarm_state']
+
+
+def test_knob_ack_then_resolve_closes_incident(cloud):
     client, _ = cloud
     assert post(client, 'fridge_tamper').status_code == 200
     assert post(client, 'alarm_acknowledged').status_code == 200
+    alert = next(a for a in client.get('/api/alerts').json() if a['type']=='TAMPER')
+    assert alert['status'] == 'acknowledged' and alert['device_acknowledged_by'] == 'knob'
+    assert alarm_state(client) == 'TAMPER'
     completion = envelope('alarm_resolved')
     assert post(client, 'alarm_resolved', completion).status_code == 200
     assert post(client, 'alarm_resolved', completion).json()['duplicate']
     alert = next(a for a in client.get('/api/alerts').json() if a['type']=='TAMPER')
     assert alert['protocol'] == 'H1'
-    assert alert['status'] == 'acknowledged'
-    assert alert['device_acknowledged_by'] == 'knob'
-    assert alert['device_resolved_by'] == 'knob'
-    assert alert['recovered_at'] is None
-    assert next(x for x in client.get('/api/clinics').json() if x['id']=='fridge-a')['alarm_state']=='TAMPER'
+    assert alert['status'] == 'resolved'
+    assert alert['resolved_by'] == alert['device_resolved_by'] == 'knob'
+    assert alert['resolved_at'] == alert['recovered_at'] == completion['ts']
+    assert alarm_state(client) == 'NORMAL'
+
+
+def test_reset_resolves_active_incidents(cloud):
+    client, _ = cloud
+    assert post(client, 'power_outage').status_code == 200
+    assert post(client, 'doors_open').status_code == 200
+    assert alarm_state(client) == 'POWER_LOSS'
+    data = {'alarm_kind': 'power_outage', 'code': 'P1', 'acknowledged_at': None, 'doors': True, 'resolved_by': 'reset'}
+    assert post(client, 'alarm_resolved', envelope('alarm_resolved', data=data)).status_code == 200
+    alerts = {a['type']: a for a in client.get('/api/alerts').json()}
+    assert alerts['POWER_LOSS']['status'] == alerts['DOORS_OPEN']['status'] == 'resolved'
+    assert alerts['POWER_LOSS']['resolved_by'] == 'reset'
+    assert alarm_state(client) == 'NORMAL'
+    assert next(x for x in client.get('/api/clinics').json() if x['id']=='fridge-a')['power_on'] is True
+
+
+def test_resolve_must_name_something(cloud):
+    client, _ = cloud
+    data = {'alarm_kind': None, 'code': None, 'acknowledged_at': None, 'doors': False, 'resolved_by': 'reset'}
+    assert post(client, 'alarm_resolved', envelope('alarm_resolved', data=data)).status_code == 422
 
 
 def test_transferred_inventory_remains_device_report(cloud):

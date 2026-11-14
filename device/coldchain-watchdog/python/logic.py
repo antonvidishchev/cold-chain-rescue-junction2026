@@ -47,6 +47,11 @@ FAKE_DISPLAY_TEMP_C = 4.0  # what a hacked fridge screen keeps showing
 TAMPER_TOLERANCE_C = 2.0  # max |Arduino - fridge screen| before the alarm
 FRIDGE_POWER_NORMAL_W = 85.0
 FRIDGE_POWER_DEFROST_W = 320.0
+# DEMO ONLY: a hacked fridge defrosts, so its interior warms up. The board sits
+# at room temperature (shifted to fridge level by the sketch), so we add the
+# warming on top of the sensor reading while the hack is active.
+DEFROST_WARMING_C_PER_S = 1.0
+DEFROST_WARMING_MAX_C = 10.0
 
 # Simulated fridge camera: stills served from assets/camera/<frame>.jpg,
 # named fridge_[empty_]<scene> depending on whether the fridge holds stock.
@@ -104,7 +109,9 @@ class Watchdog:
         self.humidity: float | None = None
         self.temp_ts: float | None = None
         self.events: deque[dict] = deque(maxlen=50)
+        self.raw_temp_c: float | None = None  # sensor reading before simulated defrost warming
         self.fridge_hacked: bool = False
+        self.hacked_at: float | None = None
         self.tamper_raised: bool = False  # mismatch alarm already raised since last reset
         self.knob_steps: int = 0  # clockwise detents accumulated in the current gesture
         self.knob_last_ts: float = 0.0
@@ -129,8 +136,16 @@ class Watchdog:
     def alarm_acknowledged(self) -> bool:
         return bool(self.alarm and self.alarm.get("acknowledged_at"))
 
+    def defrost_warming_c(self) -> float:
+        """Simulated interior warming of a hacked (defrosting) fridge."""
+        if not self.fridge_hacked or self.hacked_at is None:
+            return 0.0
+        elapsed = max(0.0, self.clock() - self.hacked_at)
+        return min(DEFROST_WARMING_MAX_C, DEFROST_WARMING_C_PER_S * elapsed)
+
     def update_reading(self, temp_c: float, humidity: float) -> None:
-        self.temp_c = round(float(temp_c), 2)
+        self.raw_temp_c = round(float(temp_c), 2)
+        self.temp_c = round(self.raw_temp_c + self.defrost_warming_c(), 2)
         self.humidity = round(float(humidity), 1)
         self.temp_ts = self.clock()
 
@@ -445,7 +460,10 @@ class Watchdog:
         """Simulate the 2026 fridge attacks: defrost while the screen reports a normal temperature.
 
         No beep here: the siren starts when check_fridge_tamper() sees the sensors disagree.
+        The interior then warms up (see defrost_warming_c), so the mismatch grows reading by reading.
         """
+        if not self.fridge_hacked:
+            self.hacked_at = self.clock()
         self.fridge_hacked = True
         msg = "Simulated attack: fridge controller set to defrost, its screen is frozen at a healthy temperature"
         self._log("hack_fridge", msg)
@@ -500,14 +518,30 @@ class Watchdog:
         self.alarm = None
         self.doors_open_until = 0.0
         self.fridge_hacked = False
+        self.hacked_at = None
         self.tamper_raised = False
         self.knob_steps = 0
         self.ack_message_until = 0.0
 
     def _cmd_reset(self) -> Outcome:
+        """Operator clears everything; any active alarm is reported as resolved."""
+        alarm = self.alarm
+        doors = self.doors_open()
         self._clear_alarms()
         self.power_out = False
         self.defrosting = False
         msg = "Alarms cleared by operator"
         self._log("reset", msg)
-        return Outcome("reset", msg, pattern=PATTERN_STOP, display=("temp", ""))
+        stubs: list[tuple[str, dict[str, Any]]] = []
+        if alarm is not None or doors:
+            stubs.append((
+                "report_alarm_resolved",
+                {
+                    "alarm_kind": alarm["kind"] if alarm else None,
+                    "code": alarm.get("protocol") if alarm else None,
+                    "acknowledged_at": alarm.get("acknowledged_at") if alarm else None,
+                    "doors": doors,
+                    "resolved_by": "reset",
+                },
+            ))
+        return Outcome("reset", msg, pattern=PATTERN_STOP, display=("temp", ""), stubs=stubs)
