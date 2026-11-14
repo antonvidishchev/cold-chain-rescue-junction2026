@@ -8,6 +8,7 @@ and backend stub calls.
 from __future__ import annotations
 
 import copy
+import random
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -42,7 +43,12 @@ HACK_TITLE = "Fridge screen disagrees with the sensor: trust the sensor, isolate
 # door contact, compressor / defrost state, power draw, error code).
 FRIDGE_MODEL = "SmartFridge SF-200 (simulated)"
 FRIDGE_SETPOINT_C = 5.0
-FRIDGE_SENSOR_OFFSET_C = 0.3  # healthy fridge reads close to the Arduino sensor
+# A healthy fridge's own probe tracks the Arduino sensor but usually reads a
+# little colder: mean offset plus per-reading noise, so now and then it is
+# slightly warmer. Clamped well inside TAMPER_TOLERANCE_C.
+FRIDGE_SENSOR_OFFSET_C = -0.3
+FRIDGE_SENSOR_NOISE_C = 0.2  # standard deviation per reading
+FRIDGE_SENSOR_MAX_DEV_C = 1.0
 FAKE_DISPLAY_TEMP_C = 4.0  # what a hacked fridge screen keeps showing
 TAMPER_TOLERANCE_C = 2.0  # max |Arduino - fridge screen| before the alarm
 FRIDGE_POWER_NORMAL_W = 85.0
@@ -97,7 +103,15 @@ PROTOCOL_TITLES = {
 
 
 class Watchdog:
-    def __init__(self, medicines: list[dict], clinics_doc: dict, clock: Callable[[], float] = time.time):
+    def __init__(
+        self,
+        medicines: list[dict],
+        clinics_doc: dict,
+        clock: Callable[[], float] = time.time,
+        rng: random.Random | None = None,
+    ):
+        self.rng = rng or random.Random()
+        self.fridge_offset_c: float = FRIDGE_SENSOR_OFFSET_C  # redrawn on every reading
         self._catalogue = copy.deepcopy(medicines)
         self.inventory: list[dict] = copy.deepcopy(medicines)
         self.main_site: dict = clinics_doc["main"]
@@ -148,6 +162,12 @@ class Watchdog:
         self.temp_c = round(self.raw_temp_c + self.defrost_warming_c(), 2)
         self.humidity = round(float(humidity), 1)
         self.temp_ts = self.clock()
+        # Drawn per reading (not per API call) so the fridge screen stays steady
+        # between sensor readings.
+        noise = self.rng.gauss(0.0, FRIDGE_SENSOR_NOISE_C)
+        self.fridge_offset_c = max(
+            -FRIDGE_SENSOR_MAX_DEV_C, min(FRIDGE_SENSOR_MAX_DEV_C, FRIDGE_SENSOR_OFFSET_C + noise)
+        )
 
     def inventory_summary(self) -> dict:
         items = self.stocked_items()
@@ -167,7 +187,7 @@ class Watchdog:
             # Attacker put the controller into defrost but keeps the screen "healthy".
             display = FAKE_DISPLAY_TEMP_C
         elif self.temp_c is not None:
-            display = round(self.temp_c + FRIDGE_SENSOR_OFFSET_C, 1)
+            display = round(self.temp_c + self.fridge_offset_c, 1)
         else:
             display = FRIDGE_SETPOINT_C
         return {
@@ -315,29 +335,45 @@ class Watchdog:
                 return self._resolve_by_knob()
             return None
 
-        acknowledged = []
+        stubs: list[tuple[str, dict[str, Any]]] = []
+        done = []
+        if doors:
+            # Doors open: the only remedy is closing them, so a single turn
+            # resolves the warning (no acknowledge step).
+            self.doors_open_until = 0.0
+            done.append("doors left open resolved")
+            stubs.append((
+                "report_alarm_resolved",
+                {
+                    "alarm_kind": None,
+                    "code": None,
+                    "acknowledged_at": None,
+                    "doors": True,
+                    "resolved_by": "knob",
+                },
+            ))
         if pending_alarm:
             self.alarm["acknowledged_at"] = now
             self.alarm["acknowledged_by"] = "knob"
-            acknowledged.append(self.alarm["title"])
-        if doors:
-            self.doors_open_until = 0.0
-            acknowledged.append("doors left open")
+            done.append(f"{self.alarm['title']} acknowledged")
+            stubs.append((
+                "report_alarm_ack",
+                {
+                    "alarm_kind": self.alarm["kind"],
+                    "code": self.alarm.get("protocol"),
+                    "doors": False,
+                    "acknowledged_by": "knob",
+                },
+            ))
         self.ack_message_until = now + ACK_MESSAGE_SECONDS
-        msg = f"Acknowledged at the fridge (knob): {', '.join(acknowledged)}"
-        self._log("alarm_ack", msg)
-        payload = {
-            "alarm_kind": self.alarm["kind"] if self.alarm else None,
-            "code": self.alarm.get("protocol") if self.alarm else None,
-            "doors": doors,
-            "acknowledged_by": "knob",
-        }
+        msg = f"Handled at the fridge (knob): {', '.join(done)}"
+        self._log("alarm_resolved" if not pending_alarm else "alarm_ack", msg)
         return Outcome(
-            "knob_ack",
+            "knob_resolve" if not pending_alarm else "knob_ack",
             msg,
             pattern=PATTERN_ACK,
-            display=("text", ACK_TEXT),
-            stubs=[("report_alarm_ack", payload)],
+            display=("text", ACK_TEXT if pending_alarm else RESOLVED_TEXT),
+            stubs=stubs,
         )
 
     # ----- commands ----------------------------------------------------

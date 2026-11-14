@@ -27,6 +27,7 @@ import backend_stub as b  # noqa: E402
 def fast(monkeypatch):
     monkeypatch.setattr(b, "_backoff", lambda attempt: 0.0)
     monkeypatch.setattr(b, "HTTP_TIMEOUT", 0.5)
+    monkeypatch.setattr(b, "EVENT_HTTP_TIMEOUT", 0.5)
     b._dropped_fields.clear()
 
 
@@ -181,25 +182,35 @@ def test_send_does_not_block_when_cloud_is_down(monkeypatch):
     assert b._outbox.pending() == 11  # 10 newest events + only the latest reading
 
 
-def test_outbox_sends_alarm_events_before_telemetry_and_keeps_newest():
+def test_outbox_keeps_events_and_newest_telemetry_apart():
     box = b.Outbox(max_events=2)
     box.put_telemetry("/api/telemetry", {"n": 1})
     box.put_event("/a", {"n": 1})
     box.put_telemetry("/api/telemetry", {"n": 2})
     box.put_event("/b", {"n": 2})
     box.put_event("/c", {"n": 3})  # full: drops the oldest event
-    got = [box.get(timeout=0) for _ in range(4)]
-    assert [(g[0], g[2]) for g in got[:3]] == [("/b", b.EVENT_ATTEMPTS), ("/c", b.EVENT_ATTEMPTS), ("/api/telemetry", 1)]
-    assert got[2][1] == {"n": 2}
-    assert got[3] is None
+    events = [box.get("event", timeout=0) for _ in range(3)]
+    assert [(e[0], e[2]) for e in events[:2]] == [("/b", b.EVENT_ATTEMPTS), ("/c", b.EVENT_ATTEMPTS)]
+    assert events[2] is None
+    telemetry = [box.get("telemetry", timeout=0) for _ in range(2)]
+    assert telemetry[0] == ("/api/telemetry", {"n": 2}, 1)  # only the newest reading is kept
+    assert telemetry[1] is None
     assert box.dropped == 2
+
+
+def test_pending_telemetry_does_not_block_events():
+    box = b.Outbox()
+    box.put_telemetry("/api/telemetry", {"n": 1})
+    assert box.get("event", timeout=0) is None
+    box.put_event("/ack", {})
+    assert box.get("event", timeout=0)[0] == "/ack"
 
 
 def test_sender_thread_survives_crashes(monkeypatch):
     box = b.Outbox()
     calls = []
 
-    def flaky(path, payload, max_attempts):
+    def flaky(path, payload, max_attempts, timeout=None):
         calls.append(path)
         if len(calls) == 1:
             raise RuntimeError("boom")
@@ -208,7 +219,7 @@ def test_sender_thread_survives_crashes(monkeypatch):
     monkeypatch.setattr(b, "_outbox", box)
     monkeypatch.setattr(b, "_deliver", flaky)
     monkeypatch.setattr(b.time, "sleep", lambda s: None)
-    threading.Thread(target=b._worker, daemon=True).start()
+    threading.Thread(target=b._worker, args=("event",), daemon=True).start()
     box.put_event("/first", {})
     box.put_event("/second", {})
     deadline = time.monotonic() + 2

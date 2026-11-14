@@ -20,8 +20,8 @@ export function WatchdogStatus({ state }: { state: BoardState }) {
   const acked = alarm?.acknowledged_at != null
   const alarmTone = !alarm ? 'green' : acked ? 'amber' : alarm.severity === 'critical' ? 'red' : 'amber'
   return (
-    <div className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-3">
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-3">
         <Tile label="Sensor temperature" value={state.temp_c == null ? '—' : `${state.temp_c.toFixed(1)} °C`}
           hint={state.temp_age_s == null ? 'waiting for Modulino Thermo' : `updated ${state.temp_age_s.toFixed(0)} s ago`} />
         <Tile label="Fridge inventory" value={state.inventory.stocked ? `${state.inventory.items} medicines` : 'Empty'}
@@ -41,32 +41,32 @@ function SmartFridgePanel({ state }: { state: BoardState }) {
   const { fridge, temp_c: sensor, fridge_mismatch_c: diff } = state
   const mismatch = diff != null && Math.abs(diff) > 2
   return (
-    <div className={`rounded-xl border p-4 ${mismatch ? 'border-red-600 bg-red-950/60' : 'border-slate-800 bg-slate-900'}`}>
+    <div className={`rounded-xl border px-4 py-3 ${mismatch ? 'border-red-600 bg-red-950/60' : 'border-slate-800 bg-slate-900'}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs uppercase tracking-wider text-slate-400">Smart fridge feed · {fridge.model}</div>
-        <span className={`rounded px-2 py-0.5 text-xs ${fridge.online ? 'bg-emerald-900 text-emerald-300' : 'bg-red-900 text-red-300'}`}>
+        <span className={`rounded px-2 py-0.5 text-xs leading-4 ${fridge.online ? 'bg-emerald-900 text-emerald-300' : 'bg-red-900 text-red-300'}`}>
           {fridge.online ? 'online' : 'offline'}
         </span>
       </div>
-      <div className="mt-3 grid gap-4 sm:grid-cols-3">
+      <div className="mt-2 grid gap-3 sm:grid-cols-3">
         <div>
           <div className="text-xs text-slate-500">Fridge screen says</div>
-          <div className="text-2xl font-bold text-slate-100">{fridge.display_temp_c.toFixed(1)} °C</div>
+          <div className="text-xl font-bold leading-tight text-slate-100">{fridge.display_temp_c.toFixed(1)} °C</div>
           <div className="text-xs text-slate-500">setpoint {fridge.setpoint_c.toFixed(1)} °C</div>
         </div>
         <div>
           <div className="text-xs text-slate-500">Arduino sensor measures</div>
-          <div className="text-2xl font-bold text-slate-100">{sensor == null ? '—' : `${sensor.toFixed(1)} °C`}</div>
+          <div className="text-xl font-bold leading-tight text-slate-100">{sensor == null ? '—' : `${sensor.toFixed(1)} °C`}</div>
           <div className={`text-xs ${mismatch ? 'font-semibold text-red-300' : 'text-slate-500'}`}>
             {diff == null ? 'no sensor data' : mismatch ? `MISMATCH Δ ${Math.abs(diff).toFixed(1)} °C` : `Δ ${Math.abs(diff).toFixed(1)} °C, consistent`}
           </div>
         </div>
-        <dl className="grid grid-cols-2 gap-x-3 text-xs text-slate-400">
-          <dt>Mode</dt><dd className="text-right text-slate-200">{fridge.mode}</dd>
-          <dt>Compressor</dt><dd className="text-right text-slate-200">{fridge.compressor_on ? 'on' : 'off'}</dd>
-          <dt>Defrost</dt><dd className="text-right text-slate-200">{fridge.defrost_active ? 'active' : 'off'}</dd>
-          <dt>Door</dt><dd className="text-right text-slate-200">{fridge.door_open ? 'open' : 'closed'}</dd>
-          <dt>Power</dt><dd className="text-right text-slate-200">{fridge.power_w.toFixed(0)} W</dd>
+        <dl className="grid grid-cols-[auto_1fr_auto_1fr] content-start gap-x-2 text-xs leading-5 text-slate-400">
+          <dt>Mode</dt><dd className="text-slate-200">{fridge.mode}</dd>
+          <dt>Door</dt><dd className="text-slate-200">{fridge.door_open ? 'open' : 'closed'}</dd>
+          <dt>Compr.</dt><dd className="text-slate-200">{fridge.compressor_on ? 'on' : 'off'}</dd>
+          <dt>Power</dt><dd className="text-slate-200">{fridge.power_w.toFixed(0)} W</dd>
+          <dt>Defrost</dt><dd className="text-slate-200">{fridge.defrost_active ? 'active' : 'off'}</dd>
         </dl>
       </div>
     </div>
@@ -83,8 +83,8 @@ function CameraPanel({ state, tone }: { state: BoardState; tone: 'green' | 'ambe
   if (!camera) return null
   const border = { green: 'border-slate-800', amber: 'border-amber-600', red: 'border-red-600' }[tone]
   return (
-    <div className={`rounded-xl border bg-slate-900 p-4 ${border}`}>
-      <div className="mb-3 flex items-center justify-between">
+    <div className={`rounded-xl border bg-slate-900 p-3 ${border}`}>
+      <div className="mb-2 flex items-center justify-between">
         <div className="text-xs uppercase tracking-wider text-slate-400">Fridge camera{camera.simulated ? ' · simulated' : ''}</div>
         <span className="flex items-center gap-1 text-xs font-semibold text-red-400">
           <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" /> LIVE
@@ -114,9 +114,9 @@ function CameraPanel({ state, tone }: { state: BoardState; tone: 'green' | 'ambe
 function Tile({ label, value, hint, tone = 'slate' }: { label: string; value: string; hint: string; tone?: 'slate' | 'green' | 'amber' | 'red' }) {
   const color = { slate: 'text-slate-100', green: 'text-emerald-300', amber: 'text-amber-300', red: 'text-red-300' }[tone]
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
+    <div className="rounded-xl border border-slate-800 bg-slate-900 px-4 py-2.5">
       <div className="text-xs uppercase tracking-wider text-slate-400">{label}</div>
-      <div className={`mt-1 text-2xl font-bold ${color}`}>{value}</div>
+      <div className={`text-xl font-bold leading-tight ${color}`}>{value}</div>
       <div className="text-xs text-slate-500">{hint}</div>
     </div>
   )

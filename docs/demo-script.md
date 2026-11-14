@@ -22,8 +22,7 @@ with the Thermo and Buzzer attached; dashboard open on the projector.
    scrolls `ALARM ACK` then `ACK H1`, and the dashboard turns green with
    "Alarm acknowledged at the fridge". Open runbook section H1. When the
    protocol is done, turn the knob clockwise again: the matrix shows `DONE`
-   and the alarm clears. (Legacy dashboard alternative: set
-   the *fridge self-report* slider for a TAMPER alert.)
+   and the alarm clears.
 7. **Close.** "Monitoring is familiar. ColdChain Rescue coordinates the response."
 
 **No board?** Use the simulator's *temperature* slider to post readings.
