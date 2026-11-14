@@ -1,11 +1,28 @@
+<!-- The Watchdog dashboard shows sections of this file on screen
+(frontend/src/runbook.ts). Keep the `## P1 — …` / `## H1 — …` headings, the
+numbered steps, the "Other watchdog alarms" table and the bold
+"Acknowledge at the fridge first:" / "When the protocol is done:" labels. -->
+
 # ColdChain Watchdog — Operator Runbook
 
 **Site:** Espoonlahti Clinic (main site), Vanha Jorvaksentie 3, 02320 Espoo
 **Fridge:** Pharmacy Fridge A (2–8 °C), watched by the ColdChain Watchdog (Arduino Uno Q)
 
 Print this page and keep it next to the fridge. When the watchdog shows a
-protocol number (LED matrix shows a warning sign, then `P1`…`P4`; the
-dashboard shows the same number), follow that section **exactly**.
+protocol number (LED matrix shows a warning sign, then `P1`…`P4`, or the
+hack code `H1`; the dashboard shows the same code), follow that section
+**exactly**.
+
+**Acknowledge at the fridge first:** turn the **knob** on the watchdog
+clockwise (about 5 clicks). The siren stops, two short rising beeps confirm,
+the matrix scrolls `ALARM ACK` and then `ACK P1` (or your code), and the
+dashboard shows "Alarm acknowledged at the fridge". The alarm stays open,
+with its countdown, while you follow the protocol.
+
+**When the protocol is done:** turn the knob clockwise again (about 5 clicks,
+after `ALARM ACK` has finished). Two beeps, the matrix shows `DONE` and then
+the temperature, and the alarm disappears from the dashboard. **Reset** on the
+dashboard does the same.
 
 > Demo document for the Junction 2026 prototype. Storage limits are demo
 > values. In a real clinic, the product SmPC and the responsible pharmacist
@@ -85,12 +102,44 @@ from the moment the outage was detected.
 
 ---
 
+## H1 — Fridge data mismatch (suspected hacked fridge)
+
+**When:** siren, matrix shows a warning sign and `H1`. The smart fridge reports
+a temperature that differs by more than 2 °C from the Arduino sensor. In the
+2026 supermarket-fridge attacks the controllers were set to defrost while the
+screens kept showing normal values, so **the fridge screen and its app cannot
+be trusted. The Arduino sensor and a handheld thermometer can.**
+
+1. Do **not** rely on the fridge display or app. Keep the door **closed**.
+2. Measure the real temperature with a handheld or data-logger thermometer
+   inside the fridge. Compare with the Arduino value on the dashboard.
+3. **Isolate the fridge:** unplug its network cable or Wi-Fi/gateway. Do not
+   power it off yet unless the pharmacist says so.
+4. Call **IT security** and report "suspected hacked refrigeration
+   controller". Do not reset the controller or change its password yourself;
+   it may be needed for investigation.
+5. If the real temperature is **inside 2–8 °C**: keep monitoring with the
+   handheld thermometer every 15 min until IT security clears the fridge.
+6. If the real temperature is **outside 2–8 °C or rising**: treat it as a
+   failed fridge. Use the safe window and clinic list on the dashboard, and
+   follow **P1 / P2 / P4** as if the power were out (call the first reachable
+   clinic, pack into validated cool boxes).
+7. Call the **pharmacist on duty**; they decide on use, quarantine or disposal
+   of everything that was in the fridge. Label affected boxes
+   **QUARANTINE — DO NOT USE**.
+8. Record: time of alarm, both temperatures, who was called. Press **Reset**
+   only after steps 2–4 are done.
+
+---
+
 ## Other watchdog alarms
 
 | Signal | Meaning | What to do |
 | --- | --- | --- |
 | Matrix: warning sign + `CHECK`, 2× three short beeps | Someone sent an **unfreeze / defrost** command to a fridge that is not empty. It was blocked. | Check whether anyone at the clinic requested a defrost. If not, treat it as a possible fridge hack: call IT security. Press **Reset** after checking. |
+| Matrix: warning sign + `H1`, two-tone siren for 10 s, then a chirp every 5 s | Smart fridge and Arduino sensor disagree by more than 2 °C: possible **hacked fridge**. | Follow section **H1** above. |
 | Matrix: scrolling `CLOSE THE DOORS`, seatbelt-style chime for 15 s | Fridge door left open. | Close the door. Check the temperature on the dashboard after 10 min. |
+| Matrix: scrolling `ACK P1` / `ACK H1` / `ACK CHECK` | The alarm was acknowledged with the knob and is still being handled. | Continue the protocol; when done, turn the knob clockwise again (or press **Reset**). |
 | Matrix: temperature only | Normal. | — |
 
 Unfreeze with an **empty** fridge is allowed and is only logged.

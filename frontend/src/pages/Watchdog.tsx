@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { BOARD_URL, board } from '../api/board'
 import type { BoardCommand, BoardState, Clinic, Medicine, Site } from '../api/board'
+import { ActionPanel } from '../components/watchdog/ActionPanel'
 import { ClinicsTable } from '../components/watchdog/ClinicsTable'
 import { CommandPanel } from '../components/watchdog/CommandPanel'
 import { InventoryTable } from '../components/watchdog/InventoryTable'
@@ -46,13 +47,20 @@ export function Watchdog() {
     }
   }, [loadStatic])
 
+  // The inventory also changes on the device (knob resolving an outage moves the
+  // stock out), so reload the table whenever the board's unit count changes.
+  const units = state?.inventory.units
+  useEffect(() => {
+    if (units === undefined) return
+    void loadStatic().catch((e: Error) => setError(e.message))
+  }, [units, loadStatic])
+
   const send = async (name: BoardCommand) => {
     setBusy(true)
     try {
       const res = await board.command(name)
       setState(res.state)
       setLastResult(res.result.message)
-      if (name === 'empty' || name === 'fill') await loadStatic()
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -73,6 +81,8 @@ export function Watchdog() {
       {!state ? (
         <p className="text-slate-400">Connecting to the watchdog at {BOARD_URL}…</p>
       ) : (
+        <>
+        <ActionPanel state={state} />
         <div className="grid gap-4 lg:grid-cols-3">
           <div className="space-y-4 lg:col-span-2">
             <WatchdogStatus state={state} />
@@ -84,6 +94,7 @@ export function Watchdog() {
             <EventLog state={state} />
           </div>
         </div>
+        </>
       )}
     </div>
   )

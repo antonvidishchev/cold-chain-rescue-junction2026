@@ -10,6 +10,9 @@ sys.path.insert(0, str(PY_DIR))
 from logic import (  # noqa: E402
     DOORS_ALARM_SECONDS,
     HANDLING_MINUTES,
+    KNOB_ACK_STEPS,
+    KNOB_WINDOW_S,
+    PATTERN_ACK,
     PATTERN_DOORS,
     PATTERN_STOP,
     PATTERN_UNFREEZE,
@@ -140,3 +143,293 @@ def test_reset_clears_alarm(wd):
 def test_unknown_command(wd):
     with pytest.raises(ValueError):
         wd.handle("self_destruct")
+
+
+# ----- simulated smart fridge / hacked fridge ---------------------------
+def test_healthy_fridge_mirrors_sensor(wd):
+    wd.update_reading(5.0, 40.0)
+    fridge = wd.fridge_state()
+    assert fridge["mode"] == "normal" and fridge["compressor_on"] and not fridge["defrost_active"]
+    assert fridge["display_temp_c"] == pytest.approx(5.3)
+    assert wd.check_fridge_tamper() is None
+    assert wd.alarm is None
+
+
+def test_hacked_fridge_raises_h1_alarm_once(wd):
+    wd.update_reading(22.0, 40.0)
+    wd.handle("hack_fridge")
+    assert wd.fridge_state()["display_temp_c"] == 4.0
+    assert wd.fridge_state()["defrost_active"] and not wd.fridge_state()["compressor_on"]
+    out = wd.check_fridge_tamper()
+    assert out is not None
+    assert out.pattern == PATTERN_URGENT
+    assert out.display == ("alarm", "H1")
+    assert [name for name, _ in out.stubs] == ["report_fridge_tamper"]
+    assert wd.alarm["kind"] == "fridge_tamper" and wd.alarm["protocol"] == "H1"
+    assert wd.check_fridge_tamper() is None  # raised only once
+    assert wd.snapshot()["fridge_mismatch_c"] == pytest.approx(-18.0)
+
+
+def test_small_mismatch_is_tolerated(wd):
+    wd.update_reading(5.0, 40.0)
+    wd.handle("hack_fridge")  # screen shows 4.0, sensor 5.0: within tolerance
+    assert wd.check_fridge_tamper() is None
+
+
+def test_no_tamper_alarm_without_sensor_or_stock(wd):
+    wd.handle("hack_fridge")
+    assert wd.check_fridge_tamper() is None  # no sensor reading yet
+    wd.update_reading(22.0, 40.0)
+    wd.handle("empty")
+    assert wd.check_fridge_tamper() is None
+
+
+def test_hack_does_not_overwrite_power_outage_alarm(wd):
+    wd.update_reading(22.0, 40.0)
+    wd.handle("power_outage")
+    wd.handle("hack_fridge")
+    out = wd.check_fridge_tamper()
+    assert out is not None and out.pattern == PATTERN_URGENT
+    assert wd.alarm["kind"] == "power_outage"
+
+
+def test_reset_clears_hack(wd):
+    wd.update_reading(22.0, 40.0)
+    wd.handle("hack_fridge")
+    wd.check_fridge_tamper()
+    wd.handle("reset")
+    assert wd.alarm is None and not wd.fridge_hacked
+    assert wd.check_fridge_tamper() is None
+    wd.handle("hack_fridge")
+    assert wd.check_fridge_tamper() is not None  # armed again
+
+
+# ----- Modulino Knob acknowledgement --------------------------------------
+def turn(wd, clock, clicks, dt=0.1):
+    out = None
+    for _ in range(clicks):
+        clock.t += dt
+        out = wd.knob_turn(1) or out
+    return out
+
+
+def test_knob_acknowledges_power_outage(wd, clock):
+    wd.handle("power_outage")
+    protocol = wd.alarm["protocol"]
+    out = turn(wd, clock, KNOB_ACK_STEPS)
+    assert out is not None and out.command == "knob_ack"
+    assert out.pattern == PATTERN_ACK
+    assert out.display == ("text", "ALARM ACK")
+    assert [s for s, _ in out.stubs] == ["report_alarm_ack"]
+    alarm = wd.snapshot()["alarm"]
+    assert alarm["acknowledged_at"] == clock.t and alarm["acknowledged_by"] == "knob"
+    assert alarm["protocol"] == protocol and alarm["seconds_left"] > 0  # alarm stays visible
+    assert wd.idle_display() == ("text", f"ACK {protocol}")
+    assert wd.ack_message_active()
+    clock.t += 5
+    assert not wd.ack_message_active()
+    assert wd.events[0]["kind"] == "alarm_ack"
+
+
+def test_knob_needs_enough_clicks(wd, clock):
+    wd.handle("power_outage")
+    assert turn(wd, clock, KNOB_ACK_STEPS - 1) is None
+    assert not wd.alarm_acknowledged()
+
+
+def test_knob_clicks_must_be_within_window(wd, clock):
+    wd.handle("power_outage")
+    assert turn(wd, clock, KNOB_ACK_STEPS, dt=KNOB_WINDOW_S + 0.5) is None
+    assert not wd.alarm_acknowledged()
+
+
+def test_knob_counter_clockwise_resets_count(wd, clock):
+    wd.handle("power_outage")
+    turn(wd, clock, KNOB_ACK_STEPS - 1)
+    assert wd.knob_turn(-1) is None
+    assert turn(wd, clock, KNOB_ACK_STEPS - 1) is None
+    assert turn(wd, clock, 1) is not None
+
+
+def test_knob_multi_step_delta(wd, clock):
+    wd.handle("unfreeze")
+    assert wd.knob_turn(KNOB_ACK_STEPS) is not None
+    assert wd.idle_display() == ("text", "ACK CHECK")
+
+
+def test_knob_without_alarm_does_nothing(wd, clock):
+    assert turn(wd, clock, KNOB_ACK_STEPS * 2) is None
+    assert all(e["kind"] != "alarm_ack" for e in wd.events)
+
+
+def test_knob_ignored_while_ack_message_shows(wd, clock):
+    wd.handle("power_outage")
+    assert turn(wd, clock, KNOB_ACK_STEPS) is not None
+    assert turn(wd, clock, KNOB_ACK_STEPS) is None  # one long turn: no instant resolve
+    assert wd.alarm_acknowledged()
+
+
+def test_second_knob_turn_resolves_alarm(wd, clock):
+    wd.handle("power_outage")
+    turn(wd, clock, KNOB_ACK_STEPS)
+    clock.t += 6
+    out = turn(wd, clock, KNOB_ACK_STEPS)
+    assert out is not None and out.command == "knob_resolve"
+    assert out.pattern == PATTERN_ACK and out.display == ("text", "DONE")
+    assert [s for s, _ in out.stubs] == ["report_alarm_resolved", "sync_inventory"]
+    assert wd.alarm is None and wd.idle_display() == ("temp", "")
+    assert wd.events[0]["kind"] == "alarm_resolved"
+    clock.t += 6
+    assert not wd.ack_message_active()
+    assert turn(wd, clock, KNOB_ACK_STEPS) is None  # nothing left to do
+
+
+def test_resolving_h1_restores_healthy_fridge(wd, clock):
+    wd.update_reading(4.5, 40)
+    wd.handle("hack_fridge")
+    wd.update_reading(12.0, 40)
+    wd.check_fridge_tamper()
+    turn(wd, clock, KNOB_ACK_STEPS)
+    clock.t += 6
+    turn(wd, clock, KNOB_ACK_STEPS)
+    assert wd.alarm is None and not wd.fridge_hacked
+    assert wd.check_fridge_tamper() is None
+
+
+def test_knob_acknowledges_doors_warning(wd, clock):
+    wd.handle("doors_open")
+    out = turn(wd, clock, KNOB_ACK_STEPS)
+    assert out is not None and out.stubs[0][1]["doors"] is True
+    assert not wd.doors_open()
+    assert wd.alarm is None and wd.idle_display() == ("temp", "")
+
+
+def test_knob_acknowledges_h1(wd, clock):
+    wd.update_reading(4.5, 40)
+    wd.handle("hack_fridge")
+    wd.update_reading(12.0, 40)
+    assert wd.check_fridge_tamper() is not None
+    assert turn(wd, clock, KNOB_ACK_STEPS) is not None
+    assert wd.idle_display() == ("text", "ACK H1")
+
+
+def test_new_alarm_after_ack_is_unacknowledged(wd, clock):
+    wd.handle("unfreeze")
+    turn(wd, clock, KNOB_ACK_STEPS)
+    wd.handle("power_outage")
+    assert not wd.alarm_acknowledged()
+    assert wd.idle_display()[0] == "alarm"
+
+
+def test_reset_after_ack(wd, clock):
+    wd.handle("power_outage")
+    turn(wd, clock, KNOB_ACK_STEPS)
+    wd.handle("reset")
+    assert wd.alarm is None and not wd.ack_message_active() and wd.knob_steps == 0
+
+
+# ----- simulated camera -----------------------------------------------------
+def frame(wd):
+    return wd.snapshot()["camera"]["frame"]
+
+
+def test_camera_normal_by_default(wd):
+    cam = wd.snapshot()["camera"]
+    assert cam == {"frame": "fridge_normal", "url": "/camera/fridge_normal.jpg", "simulated": True}
+
+
+def test_camera_door_open_for_the_doors_warning(wd, clock):
+    wd.handle("doors_open")
+    assert frame(wd) == "fridge_door_open"
+    clock.t += DOORS_ALARM_SECONDS + 1
+    assert frame(wd) == "fridge_normal"
+
+
+def test_camera_power_outage_outranks_doors(wd):
+    wd.handle("doors_open")
+    wd.handle("power_outage")
+    assert frame(wd) == "fridge_power_outage"
+
+
+def test_camera_power_outage_with_empty_fridge(wd):
+    wd.handle("empty")
+    wd.handle("power_outage")
+    assert wd.alarm is None
+    assert frame(wd) == "fridge_empty_power_outage"
+    wd.handle("reset")
+    assert frame(wd) == "fridge_empty_normal"
+
+
+def test_camera_heating_for_unfreeze_alarm(wd):
+    wd.handle("unfreeze")
+    assert frame(wd) == "fridge_heating"
+
+
+def test_camera_hacked_fridge_looks_normal(wd):
+    wd.update_reading(12.0, 40)
+    wd.handle("hack_fridge")
+    assert wd.check_fridge_tamper() is not None
+    assert frame(wd) == "fridge_normal"
+
+
+def test_camera_keeps_alarm_frame_until_resolved(wd, clock):
+    wd.handle("power_outage")
+    turn(wd, clock, KNOB_ACK_STEPS)
+    assert wd.alarm_acknowledged()
+    assert frame(wd) == "fridge_power_outage"
+    clock.t += 6
+    turn(wd, clock, KNOB_ACK_STEPS)
+    assert wd.alarm is None
+    assert frame(wd) == "fridge_empty_power_outage"  # stock moved, power still out
+
+
+def test_camera_reset_returns_to_normal(wd):
+    wd.handle("unfreeze")
+    wd.handle("reset")
+    assert frame(wd) == "fridge_normal"
+
+
+def test_camera_follows_empty_and_fill(wd):
+    wd.handle("empty")
+    assert frame(wd) == "fridge_empty_normal"
+    wd.handle("doors_open")
+    assert frame(wd) == "fridge_empty_door_open"
+    wd.handle("fill")
+    assert frame(wd) == "fridge_door_open"
+
+
+def test_camera_empty_fridge_defrosts_after_allowed_unfreeze(wd):
+    wd.handle("empty")
+    wd.handle("unfreeze")
+    assert wd.alarm is None
+    assert frame(wd) == "fridge_empty_heating"
+    wd.handle("reset")
+    assert frame(wd) == "fridge_empty_normal"
+
+
+def test_resolving_power_outage_moves_stock_out(wd, clock):
+    wd.handle("power_outage")
+    turn(wd, clock, KNOB_ACK_STEPS)
+    assert wd.stocked  # acknowledging alone keeps the stock
+    clock.t += 6
+    out = turn(wd, clock, KNOB_ACK_STEPS)
+    assert out.command == "knob_resolve"
+    assert not wd.stocked and wd.inventory_summary()["units"] == 0
+    stubs = dict(out.stubs)
+    assert stubs["sync_inventory"]["inventory"] == []
+    assert len(stubs["sync_inventory"]["transferred"]) == 16
+    assert "moved to other clinics" in wd.events[0]["message"]
+    wd.handle("reset")
+    assert frame(wd) == "fridge_empty_normal"
+    wd.handle("fill")
+    assert frame(wd) == "fridge_normal"
+
+
+def test_resolving_other_alarms_keeps_stock(wd, clock):
+    wd.handle("unfreeze")
+    turn(wd, clock, KNOB_ACK_STEPS)
+    clock.t += 6
+    out = turn(wd, clock, KNOB_ACK_STEPS)
+    assert out.command == "knob_resolve"
+    assert wd.stocked
+    assert [s for s, _ in out.stubs] == ["report_alarm_resolved"]

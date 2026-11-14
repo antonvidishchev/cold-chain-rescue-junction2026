@@ -3,9 +3,10 @@
 //   * reads the Modulino Thermo every 2 s and notifies Python ("on_reading")
 //   * plays non-blocking buzzer patterns on the Modulino Buzzer
 //   * drives the built-in 8x13 LED matrix: temperature, marquee text, alarm
+//   * polls the Modulino Knob and notifies Python ("on_knob", +clockwise detents)
 //
 // Bridge functions called from python/main.py:
-//   play_pattern(int)   0 stop, 1 unfreeze, 2 urgent, 3 doors, 4 urgent reminder
+//   play_pattern(int)   0 stop, 1 unfreeze, 2 urgent, 3 doors, 4 urgent reminder, 5 ack chirp
 //   show_text(String)   scrolling marquee, repeats until another show_* call
 //   show_alarm(String)  alternates a warning sign and the text (e.g. "P1")
 //   show_temp()         idle: current temperature
@@ -18,6 +19,13 @@
 Arduino_LED_Matrix matrix;
 ModulinoThermo thermo;
 ModulinoBuzzer buzzer;
+ModulinoKnob knob;
+bool knobOk = false;
+int16_t knobLast = 0;
+// Flip to -1 if turning the knob clockwise makes knob.get() count down.
+const int KNOB_CW_SIGN = 1;
+const unsigned long KNOB_POLL_MS = 50;
+const int16_t KNOB_MAX_STEP = 8;  // detents per poll; more means a glitch
 
 // ---------------------------------------------------------------- matrix
 const uint8_t ROWS = 8;
@@ -199,7 +207,7 @@ void updateDisplay(unsigned long now) {
 }
 
 // ---------------------------------------------------------------- buzzer
-enum Pattern { P_STOP = 0, P_UNFREEZE = 1, P_URGENT = 2, P_DOORS = 3, P_REMINDER = 4 };
+enum Pattern { P_STOP = 0, P_UNFREEZE = 1, P_URGENT = 2, P_DOORS = 3, P_REMINDER = 4, P_ACK = 5 };
 uint8_t pattern = P_STOP;
 unsigned long patternStart = 0;
 unsigned long nextToneAt = 0;
@@ -238,6 +246,15 @@ void updateBuzzer(unsigned long now) {
     case P_REMINDER:  // double chirp every 5 s until reset
       buzzer.tone(2000, 100);
       nextToneAt = now + (step % 2 == 0 ? 200 : 4800);
+      step++;
+      break;
+    case P_ACK:  // two short rising tones: "got it"
+      if (step >= 2) {
+        startPattern(P_STOP);
+        return;
+      }
+      buzzer.tone(step == 0 ? 1000 : 1800, 120);
+      nextToneAt = now + 160;
       step++;
       break;
     case P_DOORS:  // seatbelt-style chime for 15 s
@@ -291,6 +308,8 @@ void setup() {
   Modulino.begin(Wire1);
   thermo.begin();
   buzzer.begin();
+  knobOk = knob.begin();
+  if (knobOk) knobLast = knob.get();
 
   // provide_safe runs the handlers from loop() context, so I2C access is safe.
   Bridge.provide_safe("play_pattern", play_pattern);
@@ -312,6 +331,18 @@ void loop() {
     Bridge.notify("on_reading", lastTemp, humidity);
     Monitor.print("temp_c=");
     Monitor.println(lastTemp, 2);
+  }
+
+  static unsigned long lastKnob = 0;
+  if (knobOk && now - lastKnob >= KNOB_POLL_MS) {
+    lastKnob = now;
+    int16_t pos = knob.get();
+    int16_t delta = pos - knobLast;
+    if (delta != 0) {
+      knobLast = pos;
+      // knob.get() returns 0 on a failed I2C read: drop implausible jumps.
+      if (abs(delta) <= KNOB_MAX_STEP) Bridge.notify("on_knob", (int)(delta * KNOB_CW_SIGN));
+    }
   }
 
   updateBuzzer(now);

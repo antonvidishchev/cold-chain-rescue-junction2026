@@ -89,6 +89,7 @@ flowchart LR
   subgraph UnoQ["Arduino Uno Q (watchdog)"]
     T[Modulino Thermo] -->|I²C / Qwiic| MCU[STM32 sketch]
     MCU --> B[Modulino Buzzer]
+    K[Modulino Knob] -->|I²C / Qwiic| MCU
     MCU <-->|Bridge RPC| PY[Python app on Linux MPU]
   end
   PY -->|HTTP: telemetry, config, commands| API[FastAPI backend]
@@ -145,6 +146,7 @@ device/coldchain-watchdog/   Arduino App Lab app for the Uno Q
   python/logic.py            command handling, safe window, clinic selection, protocol
   python/backend_stub.py     calls to the future backend (log only by default)
   python/data/               medicines.json (inventory), clinics.json (main site + 10 clinics)
+  assets/camera/             simulated fridge camera stills (960×540 JPEG), served at /camera/
   tests/                     unit tests for logic.py
 backend/                     FastAPI service
   app/api/                   HTTP + WebSocket routes
@@ -164,7 +166,7 @@ scripts/deploy-device.sh     deploy the watchdog app to the Uno Q over adb
 
 - Python 3.12+ and [uv](https://docs.astral.sh/uv/)
 - Node.js 20+ and npm
-- An Arduino **Uno Q** with Modulino Thermo and Modulino Buzzer chained on the
+- An Arduino **Uno Q** with Modulino Thermo, Modulino Buzzer and Modulino Knob chained on the
   Qwiic connector, connected to your computer over USB and to the same
   network as your computer (Wi-Fi)
 - `adb` on your computer (`brew install android-platform-tools` on macOS).
@@ -227,21 +229,65 @@ curl -X POST http://<board-ip>:7000/api/command/power_outage
 
 | Command | Fridge stocked | Fridge empty |
 | --- | --- | --- |
-| `unfreeze` (suspicious unfreeze) | Blocked: two groups of three beeps, matrix shows a warning sign and `CHECK`, operator notification stub | Allowed, only logged |
-| `power_outage` | Two-tone siren for 10 s, then a chirp every 5 s; matrix shows a warning sign and the protocol (`P1`…`P4`); dashboard shows the safe window countdown and clinics to call | Nothing to do |
+| `unfreeze` (suspicious unfreeze) | Blocked: two groups of three beeps, matrix shows a warning sign and `CHECK`, operator notification stub | Allowed, only logged; the camera shows the empty fridge warming until `reset` |
+| `power_outage` | Two-tone siren for 10 s, then a chirp every 5 s; matrix shows a warning sign and the protocol (`P1`…`P4`); dashboard shows the safe window countdown and clinics to call | No alarm; the camera shows the dark empty fridge until `reset` |
 | `doors_open` | `CLOSE THE DOORS` marquee and seatbelt-style chime for 15 s | same |
+| `hack_fridge` (simulate hacked fridge) | The simulated smart fridge goes into defrost but its screen stays at 4.0 °C. The board compares the fridge feed with the Arduino sensor; when they differ by more than 2 °C: siren, matrix shows a warning sign and `H1`, dashboard shows the mismatch (runbook **H1**) | No alarm (nothing at risk) |
 | `empty` / `fill` | Empty the fridge or restore the full inventory | same |
+| *knob: 5 clicks clockwise* | Operator acknowledges the alarm at the fridge: buzzer stops, confirmation chirp, matrix scrolls `ALARM ACK` then `ACK <code>`; dashboard turns the runbook panel green ("acknowledged"), alarm and countdown stay. Also ends the doors warning | No alarm: ignored |
+| *knob: 5 clicks clockwise again* (after `ALARM ACK` has finished) | Protocol followed: alarm cleared, two beeps, matrix shows `DONE` then the temperature. For a power outage the stock has been moved to other clinics: the fridge is emptied (inventory synced) and stays without power until `reset` | — |
 | `reset` | Operator clears alarms, buzzer stops, matrix shows the temperature | same |
 
 The protocol numbers refer to the printed [operator runbook](docs/runbook.md).
+While an alarm or the doors warning is active, the dashboard puts that runbook
+section on top of the page: the numbered steps in large type, read from
+`docs/runbook.md` at build time (so screen and printout always match), next to
+the live call list, the sensor/fridge temperatures (H1) or the escalation time
+(P3), and the knob instruction.
 With the full demo inventory a power outage gives **P1**: the stock is safe
 for 60 min and 4 clinics are reachable (drive time + 15 min packing).
 
 Other read-only endpoints: `GET /api/state`, `GET /api/inventory`,
-`GET /api/clinics`.
+`GET /api/clinics`, and the camera stills at `GET /camera/<frame>.jpg`.
 
 The sensor is not inside a real fridge, so the room temperature it measures
-is shown and reported, but it does not trigger alarms.
+is shown and reported, but it does not trigger alarms on its own.
+
+**Smart fridge feed (simulated).** The board also simulates a connected
+fridge, with the fields typical smart fridges and commercial refrigeration
+monitors expose: screen temperature, setpoint, door, compressor, defrost,
+power draw and online status (`fridge` in `GET /api/state`). While healthy
+the fridge screen follows the Arduino sensor. After `hack_fridge` it keeps
+showing 4.0 °C while the controller defrosts (as in the 2026 supermarket
+fridge attacks); the Arduino sensor keeps telling the truth, and the mismatch
+triggers the **H1** alarm. `reset` restores the healthy fridge.
+
+**Fridge camera (simulated).** The dashboard shows a "Fridge camera" panel
+with a still that matches the board's state. The board picks the frame and
+reports it as `camera` in `GET /api/state`
+(`{"frame": "fridge_door_open", "url": "/camera/fridge_door_open.jpg", "simulated": true}`);
+the dashboard only displays it. Each scene has a stocked and an empty
+variant (`fridge_<scene>` / `fridge_empty_<scene>`), chosen from the
+inventory, so `empty` and `fill` change the picture. First match wins:
+
+| Scene | When |
+| --- | --- |
+| `power_outage` (dark, screen off) | power-outage alarm, or power still out after the outage was resolved |
+| `door_open` | doors warning running (15 s, or until acknowledged with the knob) |
+| `heating` (screen +12 °C) | suspicious-unfreeze alarm, or an allowed unfreeze of an empty fridge |
+| `normal` (screen +4.5 °C) | everything else |
+
+A hacked fridge looks normal on camera too: its screen shows a healthy
+temperature, and only the Arduino sensor reveals the attack. An acknowledged
+alarm keeps its frame until it is resolved or reset.
+
+To change the pictures, replace the JPEGs in
+`device/coldchain-watchdog/assets/camera/` (same names) and redeploy. For
+example, from a 1672×941 PNG:
+
+```bash
+sips -s format jpeg -s formatOptions 80 --resampleWidth 960 fridge_normal.png --out device/coldchain-watchdog/assets/camera/fridge_normal.jpg
+```
 
 ### Unit tests
 
