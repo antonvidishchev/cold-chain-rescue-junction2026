@@ -122,8 +122,12 @@ def perform(outcome: Outcome) -> None:
         bridge_call("play_pattern", outcome.pattern)
     if outcome.display is not None:
         apply_display(outcome.display)
+    # Cloud reporting is best effort: it must never stop the local alarm.
     for stub_name, payload in outcome.stubs:
-        backend_stub.STUBS[stub_name](payload)
+        try:
+            backend_stub.STUBS[stub_name](payload)
+        except Exception as exc:
+            print(f"[backend] {stub_name} failed: {type(exc).__name__}: {exc}", flush=True)
 
 
 def loop() -> None:
