@@ -3,3 +3,12 @@
 body {
   @apply bg-slate-950 text-slate-100 antialiased;
 }
+
+@keyframes marquee {
+  from { transform: translateX(100%); }
+  to { transform: translateX(-100%); }
+}
+.marquee {
+  display: inline-block;
+  animation: marquee 8s linear infinite;
+}

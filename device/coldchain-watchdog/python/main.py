@@ -1,145 +1,141 @@
 """ColdChain Watchdog: Linux (MPU) side of the Arduino Uno Q.
 
-Loop:
-  1. receive temperature readings from the sketch over Bridge (``on_reading``)
-  2. evaluate the local alarm rule using the config cached from the backend
-  3. switch the buzzer via ``Bridge.call("set_alarm", ...)``
-  4. send telemetry and poll for commands (silence / test_alarm)
+* receives Modulino Thermo readings from the sketch over Bridge
+* serves a REST API on :7000 (WebUI brick) used by the React dashboard
+* reacts to the simulation commands via ``logic.Watchdog``
+* drives the buzzer and the LED matrix through Bridge calls
+* reports every event to the (future) backend through ``backend_stub``
 
-The rule runs locally, so the buzzer still works when the backend is down.
-Only the standard library is used for HTTP, to keep the App Lab image lean.
+HTTP handlers only change state and queue device actions; the App loop
+performs the Bridge and backend calls, so the API stays responsive.
 """
 
 from __future__ import annotations
 
 import json
-import os
+import queue
 import threading
 import time
-import urllib.error
-import urllib.request
-from datetime import datetime, timezone
+from pathlib import Path
 
+from arduino.app_bricks.web_ui import WebUI
 from arduino.app_utils import App, Bridge
+from fastapi import HTTPException
 
-API_URL = os.environ.get("COLDCHAIN_API_URL", "http://192.168.1.10:8000").rstrip("/")
-DEVICE_ID = os.environ.get("COLDCHAIN_DEVICE_ID", "unoq-fridge-a")
-LOOP_SECONDS = 2.0
-CONFIG_REFRESH_SECONDS = 10.0
-HTTP_TIMEOUT = 1.5
+import backend_stub
+from logic import COMMANDS, PATTERN_URGENT_REMINDER, Outcome, Watchdog
 
-# Safe defaults used until the backend has been reached at least once:
-# typical 2-8 C fridge range, assume stock is present (fail loud, not silent).
-_config = {
-    "min_c": 2.0,
-    "max_c": 8.0,
-    "grace_seconds": 30,
-    "stock_present": True,
-    "silenced": False,
-}
-_lock = threading.Lock()
-_latest = {"temp_c": None, "humidity": None}
-_state = {"out_of_range_since": None, "alarm": False, "test_until": 0.0, "seq": 0, "last_config": 0.0}
+DATA_DIR = Path(__file__).parent / "data"
+TELEMETRY_SECONDS = 30.0
+
+medicines = json.loads((DATA_DIR / "medicines.json").read_text())
+clinics_doc = json.loads((DATA_DIR / "clinics.json").read_text())
+
+watchdog = Watchdog(medicines, clinics_doc)
+lock = threading.Lock()
+actions: queue.Queue[Outcome] = queue.Queue()
+loop_state = {"doors_shown": False, "last_telemetry": 0.0}
 
 
+# ----- Bridge: sketch -> Python ----------------------------------------
 def on_reading(temp_c: float, humidity: float) -> None:
-    with _lock:
-        _latest["temp_c"] = float(temp_c)
-        _latest["humidity"] = float(humidity)
+    with lock:
+        watchdog.update_reading(temp_c, humidity)
 
 
 Bridge.provide("on_reading", on_reading)
 
 
-def _http(method: str, path: str, body: dict | None = None):
-    data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(
-        f"{API_URL}{path}", data=data, method=method, headers={"Content-Type": "application/json"}
-    )
-    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
-        raw = resp.read()
-        return json.loads(raw) if raw else None
+# ----- REST API ---------------------------------------------------------
+def api_state() -> dict:
+    with lock:
+        return watchdog.snapshot()
 
 
-def should_alarm(temp_c: float | None, now: float) -> bool:
-    """Local alarm rule: stock present AND out of range for longer than the grace period."""
-    if temp_c is None:
-        return False
-    out_of_range = temp_c < _config["min_c"] or temp_c > _config["max_c"]
-    if not out_of_range:
-        _state["out_of_range_since"] = None
-        return False
-    if _state["out_of_range_since"] is None:
-        _state["out_of_range_since"] = now
-    elapsed = now - _state["out_of_range_since"]
-    return bool(_config["stock_present"]) and elapsed >= _config["grace_seconds"]
+def api_inventory() -> dict:
+    with lock:
+        return {"inventory": watchdog.inventory, "summary": watchdog.inventory_summary()}
 
 
-def refresh_config(now: float) -> None:
-    if now - _state["last_config"] < CONFIG_REFRESH_SECONDS:
-        return
-    _state["last_config"] = now
+def api_clinics() -> dict:
+    with lock:
+        return {
+            "main": watchdog.main_site,
+            "clinics": watchdog.clinics,
+            "assessment": watchdog.assess_power_outage(),
+        }
+
+
+def api_command(name: str) -> dict:
+    if name not in COMMANDS:
+        raise HTTPException(status_code=404, detail=f"unknown command {name!r}; use one of {list(COMMANDS)}")
+    with lock:
+        outcome = watchdog.handle(name)
+        state = watchdog.snapshot()
+    print(f"[command] {name}: {outcome.message}", flush=True)
+    actions.put(outcome)
+    return {"result": outcome.to_dict(), "state": state}
+
+
+ui = WebUI()
+ui.expose_api("GET", "/api/state", api_state)
+ui.expose_api("GET", "/api/inventory", api_inventory)
+ui.expose_api("GET", "/api/clinics", api_clinics)
+ui.expose_api("POST", "/api/command/{name}", api_command)
+
+
+# ----- device actions ---------------------------------------------------
+def bridge_call(method: str, *args) -> None:
     try:
-        cfg = _http("GET", f"/api/devices/{DEVICE_ID}/config")
-        for key in _config:
-            if key in cfg:
-                _config[key] = cfg[key]
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        print(f"[config] backend unreachable, using cached config: {exc}", flush=True)
+        Bridge.call(method, *args)
+    except Exception as exc:  # the sketch may still be booting
+        print(f"[bridge] {method}{args} failed: {exc}", flush=True)
 
 
-def handle_commands(now: float) -> None:
-    try:
-        commands = _http("GET", f"/api/devices/{DEVICE_ID}/commands") or []
-    except (urllib.error.URLError, OSError, ValueError):
-        return
-    for cmd in commands:
-        name = cmd.get("command")
-        if name == "silence":
-            _config["silenced"] = True
-        elif name == "unsilence":
-            _config["silenced"] = False
-        elif name == "test_alarm":
-            _state["test_until"] = now + 3
-        print(f"[command] {name}", flush=True)
+def apply_display(display: tuple[str, str]) -> None:
+    kind, text = display
+    if kind == "text":
+        bridge_call("show_text", text)
+    elif kind == "alarm":
+        bridge_call("show_alarm", text)
+    else:
+        bridge_call("show_temp")
 
 
-def send_telemetry(temp_c: float, alarm: bool) -> None:
-    _state["seq"] += 1
-    payload = {
-        "device_id": DEVICE_ID,
-        "ts": datetime.now(timezone.utc).isoformat(),
-        "temp_c": round(temp_c, 2),
-        "seq": _state["seq"],
-        "alarm_active": alarm,
-    }
-    try:
-        _http("POST", "/api/telemetry", payload)
-    except (urllib.error.URLError, OSError, ValueError) as exc:
-        print(f"[telemetry] send failed: {exc}", flush=True)
+def perform(outcome: Outcome) -> None:
+    if outcome.pattern is not None:
+        bridge_call("play_pattern", outcome.pattern)
+    if outcome.display is not None:
+        apply_display(outcome.display)
+        loop_state["doors_shown"] = outcome.display[0] == "text"
+    for stub_name, payload in outcome.stubs:
+        backend_stub.STUBS[stub_name](payload)
 
 
 def loop() -> None:
-    now = time.monotonic()
-    refresh_config(now)
-    handle_commands(now)
+    try:
+        perform(actions.get(timeout=0.5))
+    except queue.Empty:
+        pass
 
-    with _lock:
-        temp_c = _latest["temp_c"]
+    now = time.time()
+    with lock:
+        doors_open = watchdog.doors_open()
+        idle = watchdog.idle_display()
+        alarm_kind = watchdog.alarm["kind"] if watchdog.alarm else None
+        temp_c, humidity = watchdog.temp_c, watchdog.humidity
 
-    alarm = should_alarm(temp_c, now)
-    buzz = (alarm and not _config["silenced"]) or now < _state["test_until"]
-    if not alarm:
-        _config["silenced"] = False  # re-arm once back in range
-    if buzz != _state["alarm"]:
-        Bridge.call("set_alarm", buzz)
-        _state["alarm"] = buzz
+    # "Close the doors" lasts 15 s, then the matrix returns to alarm / temperature.
+    if loop_state["doors_shown"] and not doors_open:
+        loop_state["doors_shown"] = False
+        apply_display(idle)
+        if alarm_kind == "power_outage":
+            bridge_call("play_pattern", PATTERN_URGENT_REMINDER)
 
-    if temp_c is not None:
-        send_telemetry(temp_c, alarm)
-
-    time.sleep(LOOP_SECONDS)
+    if temp_c is not None and now - loop_state["last_telemetry"] >= TELEMETRY_SECONDS:
+        loop_state["last_telemetry"] = now
+        backend_stub.send_telemetry({"temp_c": temp_c, "humidity": humidity, "alarm": alarm_kind})
 
 
-print(f"ColdChain Watchdog {DEVICE_ID} -> {API_URL}", flush=True)
+print(f"ColdChain Watchdog {backend_stub.DEVICE_ID}: API on :7000, backend stub enabled={backend_stub.BACKEND_ENABLED}", flush=True)
 App.run(user_loop=loop)
