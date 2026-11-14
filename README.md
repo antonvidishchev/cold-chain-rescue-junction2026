@@ -157,7 +157,6 @@ backend/                     FastAPI service
   tests/
 frontend/                    React dashboard + simulator
 docs/                        architecture, demo script, operator runbook (runbook.md)
-scripts/dev.sh               run backend + frontend together
 scripts/deploy-device.sh     deploy the watchdog app to the Uno Q over adb
 ```
 
@@ -212,15 +211,12 @@ echo "VITE_BOARD_URL=http://<board-ip>:7000" > .env.local
 npm run dev
 ```
 
-Open <http://localhost:5173>. The **Fridge watchdog** tab talks directly to
+Open <http://localhost:5173>. The dashboard talks directly to
 the board: live temperature, inventory, nearby clinics, alarms and the
 simulation buttons. If `VITE_BOARD_URL` is not set, the dashboard uses
 `http://10.0.41.103:7000`. The nearby clinics card has a **Show map** button
 that plots the fridge site and all clinics on an OpenStreetMap map (the map
 tiles need internet on the laptop; the clinic table works offline).
-
-The **Backend dashboard (legacy)** tab needs the FastAPI backend (see
-below). The watchdog does not need it.
 
 ### 3. Test the scenarios
 
@@ -302,7 +298,7 @@ uv run --no-project --with pytest pytest device/coldchain-watchdog/tests
 cd backend && uv run pytest
 ```
 
-### Backend (optional, legacy dashboard)
+### Backend (optional, legacy local app)
 
 ```bash
 cd backend
@@ -311,7 +307,7 @@ uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 API docs: <http://localhost:8000/docs>. The demo data in `seed/` loads on
-first start. `./scripts/dev.sh` runs the backend and the dashboard together.
+first start.
 
 The watchdog does not call this legacy backend. Every event goes through
 `device/coldchain-watchdog/python/backend_stub.py`, which logs the JSON
@@ -331,7 +327,6 @@ is gitignored too. Never commit keys or print request headers.
 | Variable | Where | Default | Meaning |
 | --- | --- | --- | --- |
 | `VITE_BOARD_URL` | frontend | `http://10.0.41.103:7000` | Watchdog API on the Uno Q |
-| `VITE_API_URL` | frontend | `http://localhost:8000` | Backend URL (legacy tab) |
 | `BACKEND_ENABLED` | device | `0` | `1` = backend stubs also POST their payloads |
 | `COLDCHAIN_API_URL` | device | `http://localhost:8000` | Backend URL as seen from the board |
 | `COLDCHAIN_DEVICE_ID` | device | `unoq-fridge-a` | Device identity |
