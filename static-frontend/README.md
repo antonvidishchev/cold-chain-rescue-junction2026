@@ -2,6 +2,14 @@
 
 Independent React + TypeScript + Vite static frontend, scaffolded with the official React TypeScript template. This directory is the entire scope: it does not replace the old frontend or change the backend/device. No deployment or infrastructure is performed.
 
+## Theme
+
+The dark palette matches the original frontend: slate surfaces, sky-blue navigation
+and destination markers, emerald monitored-state indicators, amber warnings, and red
+alarms. Blue destination dots do not imply verified availability. Only map tiles are
+darkened; markers, controls, attribution, and camera images retain their own colours.
+Compact spacing and initial main-site map centering are unchanged.
+
 ## Run and validate
 
 Node 22.12+ (or a newer supported Node version) and npm are required. In PowerShell:

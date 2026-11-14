@@ -12,10 +12,10 @@ export default function HistoryChart({ readings, clinic }: { readings: Reading[]
   return <>
     <svg className="history-chart" viewBox="0 0 760 210" role="img" aria-labelledby={title}>
       <title id={title}>{clinic.city} measured temperature history. {points.length} observations. Latest {points.at(-1)!.temp_c} degrees Celsius. Configured range {clinic.effective_range.min_c} to {clinic.effective_range.max_c} degrees.</title>
-      <rect x="48" y={y(clinic.effective_range.max_c)} width="680" height={y(clinic.effective_range.min_c) - y(clinic.effective_range.max_c)} fill="#e3f1e9" rx="3" />
-      {[min, clinic.effective_range.min_c, clinic.effective_range.max_c, max].map((tick, index) => <g key={index}><line x1="48" x2="728" y1={y(tick)} y2={y(tick)} stroke="#dce4e4" strokeDasharray="3 5" /><text x="37" y={y(tick) + 4} textAnchor="end">{tick.toFixed(1)}°</text></g>)}
-      <polyline fill="none" stroke="#13776d" strokeWidth="2.5" strokeLinejoin="round" points={points.map(p => `${x(p.ts)},${y(p.temp_c)}`).join(' ')} />
-      {points.map(p => <circle key={p.id} cx={x(p.ts)} cy={y(p.temp_c)} r={points.length > 80 ? 2 : 3.5} fill={p.temp_c < clinic.effective_range.min_c || p.temp_c > clinic.effective_range.max_c ? '#be4938' : '#13776d'}><title>{dateTime(p.ts)}: {p.temp_c}°C{p.stale ? ' (late arrival)' : ''}</title></circle>)}
+      <rect x="48" y={y(clinic.effective_range.max_c)} width="680" height={y(clinic.effective_range.min_c) - y(clinic.effective_range.max_c)} fill="var(--chart-range)" rx="3" />
+      {[min, clinic.effective_range.min_c, clinic.effective_range.max_c, max].map((tick, index) => <g key={index}><line x1="48" x2="728" y1={y(tick)} y2={y(tick)} stroke="var(--chart-grid)" strokeDasharray="3 5" /><text x="37" y={y(tick) + 4} textAnchor="end">{tick.toFixed(1)}°</text></g>)}
+      <polyline fill="none" stroke="var(--chart-line)" strokeWidth="2.5" strokeLinejoin="round" points={points.map(p => `${x(p.ts)},${y(p.temp_c)}`).join(' ')} />
+      {points.map(p => <circle key={p.id} cx={x(p.ts)} cy={y(p.temp_c)} r={points.length > 80 ? 2 : 3.5} fill={p.temp_c < clinic.effective_range.min_c || p.temp_c > clinic.effective_range.max_c ? 'var(--chart-alert)' : 'var(--chart-line)'}><title>{dateTime(p.ts)}: {p.temp_c}°C{p.stale ? ' (late arrival)' : ''}</title></circle>)}
       <text x="48" y="200">{dateTime(points[0].ts)}</text><text x="728" y="200" textAnchor="end">{dateTime(points.at(-1)!.ts)}</text>
     </svg>
     <div className="chart-caption"><span><i className="legend-dot teal" />Measured °C</span><span><i className="legend-dot range" />Configured range</span><span>{points.length} observations · last 24h</span></div>
