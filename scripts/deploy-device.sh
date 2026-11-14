@@ -18,6 +18,8 @@ for item in app.yaml python sketch assets; do
   adb push "$APP_DIR/$item" "$REMOTE/" >/dev/null
 done
 adb shell "rm -rf $REMOTE/python/__pycache__"
+# python/.env holds the device keys (gitignored); keep it private on the board.
+adb shell "[ -f $REMOTE/python/.env ] && chmod 600 $REMOTE/python/.env || true"
 adb shell "arduino-app-cli app start $APP_ID"
 
 IP=$(adb shell "ip -4 addr show wlan0" | awk '/inet /{split($2,a,"/");print a[1]}')

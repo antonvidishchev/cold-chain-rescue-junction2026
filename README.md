@@ -144,7 +144,8 @@ device/coldchain-watchdog/   Arduino App Lab app for the Uno Q
   sketch/                    STM32 sketch: Modulino Thermo, buzzer patterns, LED matrix
   python/main.py             Linux-side app: REST API, Bridge calls, event loop
   python/logic.py            command handling, safe window, clinic selection, protocol
-  python/backend_stub.py     calls to the future backend (log only by default)
+  python/backend_stub.py     cloud backend client (log only unless BACKEND_ENABLED=1)
+  python/.env                device keys for the cloud backend (gitignored, never commit)
   python/data/               medicines.json (inventory), clinics.json (main site + 10 clinics)
   assets/camera/             simulated fridge camera stills (960×540 JPEG), served at /camera/
   tests/                     unit tests for logic.py
@@ -312,10 +313,18 @@ uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 API docs: <http://localhost:8000/docs>. The demo data in `seed/` loads on
 first start. `./scripts/dev.sh` runs the backend and the dashboard together.
 
-The watchdog does not call this backend yet: every event goes through
+The watchdog does not call this legacy backend. Every event goes through
 `device/coldchain-watchdog/python/backend_stub.py`, which logs the JSON
-payload. Set `BACKEND_ENABLED=1` and `COLDCHAIN_API_URL` on the device to
-also POST it once the backend has matching endpoints.
+envelope and, with `BACKEND_ENABLED=1`, POSTs it to the Azure cloud backend
+(`backend/function_app.py`) with the `x-device-key` and `x-functions-key`
+headers. Sends run on a background thread with retries, so a slow cold start
+never blocks the alarm loop.
+
+Device credentials live in `device/coldchain-watchdog/python/.env` (plain
+`KEY=value` lines, loaded by `backend_stub.py`; real environment variables win).
+The file is gitignored, `scripts/deploy-device.sh` pushes it to the board with
+mode 600, and its values come from the private Arduino developer handoff, which
+is gitignored too. Never commit keys or print request headers.
 
 ### Configuration
 
@@ -326,6 +335,8 @@ also POST it once the backend has matching endpoints.
 | `BACKEND_ENABLED` | device | `0` | `1` = backend stubs also POST their payloads |
 | `COLDCHAIN_API_URL` | device | `http://localhost:8000` | Backend URL as seen from the board |
 | `COLDCHAIN_DEVICE_ID` | device | `unoq-fridge-a` | Device identity |
+| `COLDCHAIN_DEVICE_KEY` | device `.env` | none | Per-device key (`x-device-key`), secret |
+| `COLDCHAIN_DEVICE_FUNCTION_KEY` | device `.env` | none | Device function key (`x-functions-key`), secret |
 | `COLDCHAIN_DB_URL` | backend | `sqlite:///./coldchain.db` | Database |
 | `COLDCHAIN_CORS_ORIGINS` | backend | `http://localhost:5173` | Allowed dashboard origins |
 | `COLDCHAIN_TAMPER_TOLERANCE_C` | backend | `2.0` | Allowed device-vs-fridge difference |
