@@ -1,14 +1,34 @@
+import { lazy, Suspense, useState } from 'react'
 import type { AssessedClinic, Clinic, Site } from '../../api/board'
+
+const ClinicsMap = lazy(() => import('./ClinicsMap'))
 
 export function ClinicsTable({ main, clinics, active }: {
   main: Site | null
   clinics: (Clinic | AssessedClinic)[]
   active: boolean
 }) {
+  const [showMap, setShowMap] = useState(false)
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900 p-4">
-      <h3 className="font-semibold">Nearby clinics</h3>
+      <div className="flex items-center justify-between">
+        <h3 className="font-semibold">Nearby clinics</h3>
+        <button
+          onClick={() => setShowMap((v) => !v)}
+          className="rounded border border-slate-700 px-2 py-1 text-xs hover:bg-slate-800"
+        >
+          {showMap ? 'Hide map' : 'Show map'}
+        </button>
+      </div>
       {main && <p className="mb-3 text-xs text-slate-400">From {main.name}, {main.address}</p>}
+      {showMap && (
+        <div className="mb-3">
+          <Suspense fallback={<p className="text-xs text-slate-400">Loading map…</p>}>
+            <ClinicsMap main={main} clinics={clinics} active={active} />
+          </Suspense>
+          <p className="mt-1 text-xs text-slate-500">Red = fridge site. Blue = clinic{active ? '; green = reachable, grey = not' : ''}.</p>
+        </div>
+      )}
       <table className="w-full text-left text-sm">
         <thead className="text-xs uppercase text-slate-400">
           <tr>

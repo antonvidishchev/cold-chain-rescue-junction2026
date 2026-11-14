@@ -214,7 +214,9 @@ npm run dev
 Open <http://localhost:5173>. The **Fridge watchdog** tab talks directly to
 the board: live temperature, inventory, nearby clinics, alarms and the
 simulation buttons. If `VITE_BOARD_URL` is not set, the dashboard uses
-`http://10.0.41.103:7000`.
+`http://10.0.41.103:7000`. The nearby clinics card has a **Show map** button
+that plots the fridge site and all clinics on an OpenStreetMap map (the map
+tiles need internet on the laptop; the clinic table works offline).
 
 The **Backend dashboard (legacy)** tab needs the FastAPI backend (see
 below). The watchdog does not need it.
