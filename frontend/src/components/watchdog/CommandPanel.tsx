@@ -1,4 +1,7 @@
+import { useState } from 'react'
 import type { BoardCommand } from '../../api/board'
+
+const OPEN_KEY = 'coldchain.commandPanel.open'
 
 const COMMANDS: { name: BoardCommand; label: string; hint: string; style: string }[] = [
   { name: 'unfreeze', label: '❄ Suspicious unfreeze', hint: 'Fridge receives a defrost command', style: 'bg-sky-800 hover:bg-sky-700' },
@@ -14,10 +17,22 @@ export function CommandPanel({ onCommand, busy, lastResult }: {
   busy: boolean
   lastResult: string | null
 }) {
+  const [open, setOpen] = useState(() => localStorage.getItem(OPEN_KEY) !== '0')
+  const toggle = () => {
+    setOpen((o) => {
+      localStorage.setItem(OPEN_KEY, o ? '0' : '1')
+      return !o
+    })
+  }
   return (
     <div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/60 p-4 text-sm">
-      <h3 className="mb-3 font-semibold">Simulate on the board</h3>
-      <div className="grid gap-2">
+      <button type="button" onClick={toggle} aria-expanded={open}
+        className="flex w-full items-center justify-between text-left font-semibold hover:text-white">
+        <span>Simulate on the board</span>
+        <span className={`text-xs text-slate-400 transition-transform ${open ? 'rotate-90' : ''}`}>▶</span>
+      </button>
+      {open && <>
+      <div className="mt-3 grid gap-2">
         {COMMANDS.map((c) => (
           <button key={c.name} type="button" disabled={busy} onClick={() => onCommand(c.name)}
             className={`flex items-center justify-between rounded-lg px-3 py-2 text-left disabled:opacity-50 ${c.style}`}>
@@ -30,6 +45,7 @@ export function CommandPanel({ onCommand, busy, lastResult }: {
           ✓ Reset alarms (operator)
         </button>
       </div>
+      </>}
       {lastResult && <p className="mt-3 text-xs text-slate-400">Last: {lastResult}</p>}
     </div>
   )
