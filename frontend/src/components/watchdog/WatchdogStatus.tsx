@@ -11,6 +11,8 @@ function formatCountdown(seconds: number) {
 
 export function WatchdogStatus({ state }: { state: BoardState }) {
   const { alarm } = state
+  const acked = alarm?.acknowledged_at != null
+  const alarmTone = !alarm ? 'green' : acked ? 'amber' : alarm.severity === 'critical' ? 'red' : 'amber'
   return (
     <div className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-3">
@@ -19,7 +21,7 @@ export function WatchdogStatus({ state }: { state: BoardState }) {
         <Tile label="Fridge inventory" value={state.inventory.stocked ? `${state.inventory.items} medicines` : 'Empty'}
           hint={state.inventory.stocked ? `${state.inventory.units} units` : 'nothing at risk'} />
         <Tile label="Alarm" value={alarm ? (alarm.protocol ?? 'CHECK') : 'None'}
-          hint={alarm ? alarm.kind.replace('_', ' ') : 'all quiet'} tone={alarm ? (alarm.severity === 'critical' ? 'red' : 'amber') : 'green'} />
+          hint={alarm ? `${alarm.kind.replace('_', ' ')}${acked ? ' · acknowledged' : ''}` : 'all quiet'} tone={alarmTone} />
       </div>
 
       <SmartFridgePanel state={state} />
@@ -32,8 +34,18 @@ export function WatchdogStatus({ state }: { state: BoardState }) {
         </div>
       )}
 
+      {alarm && acked && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-600 bg-emerald-950/80 px-4 py-3 text-emerald-200">
+          <div className="text-lg font-semibold">✓ Alarm acknowledged at the fridge</div>
+          <div className="text-sm text-emerald-300">
+            {alarm.acknowledged_by === 'knob' ? 'Modulino Knob turned clockwise' : alarm.acknowledged_by} ·{' '}
+            {new Date(alarm.acknowledged_at! * 1000).toLocaleTimeString()}
+          </div>
+        </div>
+      )}
+
       {alarm && (
-        <div className={`rounded-xl border p-4 ${alarm.severity === 'critical' ? 'border-red-600 bg-red-950/80' : 'border-amber-600 bg-amber-950/70'}`}>
+        <div className={`rounded-xl border p-4 ${acked ? 'border-slate-600 bg-slate-900' : alarm.severity === 'critical' ? 'border-red-600 bg-red-950/80' : 'border-amber-600 bg-amber-950/70'}`}>
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <div className="text-xs uppercase tracking-wider text-slate-300">⚠ {alarm.title}</div>

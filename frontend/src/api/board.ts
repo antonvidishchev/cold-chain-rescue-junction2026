@@ -80,6 +80,8 @@ export interface BoardAlarm extends Partial<Omit<Assessment, 'protocol' | 'proto
   started_at: number
   deadline: number | null
   seconds_left?: number
+  acknowledged_at?: number | null
+  acknowledged_by?: string
 }
 
 export interface BoardEvent {

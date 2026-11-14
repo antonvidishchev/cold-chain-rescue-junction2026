@@ -3,6 +3,7 @@
 * receives Modulino Thermo readings from the sketch over Bridge
 * serves a REST API on :7000 (WebUI brick) used by the React dashboard
 * reacts to the simulation commands via ``logic.Watchdog``
+* turning the Modulino Knob clockwise acknowledges the alarm at the fridge
 * drives the buzzer and the LED matrix through Bridge calls
 * reports every event to the (future) backend through ``backend_stub``
 
@@ -34,7 +35,7 @@ clinics_doc = json.loads((DATA_DIR / "clinics.json").read_text())
 watchdog = Watchdog(medicines, clinics_doc)
 lock = threading.Lock()
 actions: queue.Queue[Outcome] = queue.Queue()
-loop_state = {"doors_shown": False, "last_telemetry": 0.0}
+loop_state: dict = {"display": None, "last_telemetry": 0.0}
 
 
 # ----- Bridge: sketch -> Python ----------------------------------------
@@ -44,6 +45,19 @@ def on_reading(temp_c: float, humidity: float) -> None:
 
 
 Bridge.provide("on_reading", on_reading)
+
+
+def on_knob(steps: int) -> None:
+    """Modulino Knob moved; positive = clockwise detents."""
+    print(f"[knob] {int(steps):+d}", flush=True)
+    with lock:
+        outcome = watchdog.knob_turn(int(steps))
+    if outcome is not None:
+        print(f"[knob] {outcome.message}", flush=True)
+        actions.put(outcome)
+
+
+Bridge.provide("on_knob", on_knob)
 
 
 # ----- REST API ---------------------------------------------------------
@@ -94,6 +108,7 @@ def bridge_call(method: str, *args) -> None:
 
 def apply_display(display: tuple[str, str]) -> None:
     kind, text = display
+    loop_state["display"] = display
     if kind == "text":
         bridge_call("show_text", text)
     elif kind == "alarm":
@@ -107,7 +122,6 @@ def perform(outcome: Outcome) -> None:
         bridge_call("play_pattern", outcome.pattern)
     if outcome.display is not None:
         apply_display(outcome.display)
-        loop_state["doors_shown"] = outcome.display[0] == "text"
     for stub_name, payload in outcome.stubs:
         backend_stub.STUBS[stub_name](payload)
 
@@ -129,15 +143,18 @@ def loop() -> None:
     with lock:
         fridge_display = watchdog.fridge_state()["display_temp_c"]
         doors_open = watchdog.doors_open()
+        ack_message = watchdog.ack_message_active()
         idle = watchdog.idle_display()
         alarm_kind = watchdog.alarm["kind"] if watchdog.alarm else None
+        alarm_acked = watchdog.alarm_acknowledged()
         temp_c, humidity = watchdog.temp_c, watchdog.humidity
 
-    # "Close the doors" lasts 15 s, then the matrix returns to alarm / temperature.
-    if loop_state["doors_shown"] and not doors_open:
-        loop_state["doors_shown"] = False
+    # Temporary text ("close the doors" 15 s, "alarm ack" 5 s), then back to the
+    # idle display: alarm, "ACK <code>" once acknowledged, or the temperature.
+    shown = loop_state["display"]
+    if shown and shown[0] == "text" and shown != idle and not doors_open and not ack_message:
         apply_display(idle)
-        if alarm_kind == "power_outage":
+        if alarm_kind == "power_outage" and not alarm_acked:
             bridge_call("play_pattern", PATTERN_URGENT_REMINDER)
 
     if temp_c is not None and now - loop_state["last_telemetry"] >= TELEMETRY_SECONDS:

@@ -19,6 +19,13 @@ PATTERN_UNFREEZE = 1
 PATTERN_URGENT = 2
 PATTERN_DOORS = 3
 PATTERN_URGENT_REMINDER = 4  # chirp every few seconds, no siren
+PATTERN_ACK = 5  # short rising confirmation chirp
+
+# Modulino Knob: this many clockwise detents within the window acknowledge the alarm.
+KNOB_ACK_STEPS = 5
+KNOB_WINDOW_S = 3.0
+ACK_TEXT = "ALARM ACK"
+ACK_MESSAGE_SECONDS = 5
 
 DOORS_ALARM_SECONDS = 15
 # Time to pack the stock into cool boxes and load the car, added to the drive.
@@ -91,6 +98,9 @@ class Watchdog:
         self.events: deque[dict] = deque(maxlen=50)
         self.fridge_hacked: bool = False
         self.tamper_raised: bool = False  # mismatch alarm already raised since last reset
+        self.knob_steps: int = 0  # clockwise detents accumulated in the current gesture
+        self.knob_last_ts: float = 0.0
+        self.ack_message_until: float = 0.0
 
     # ----- state -------------------------------------------------------
     @property
@@ -102,6 +112,12 @@ class Watchdog:
 
     def doors_open(self) -> bool:
         return self.clock() < self.doors_open_until
+
+    def ack_message_active(self) -> bool:
+        return self.clock() < self.ack_message_until
+
+    def alarm_acknowledged(self) -> bool:
+        return bool(self.alarm and self.alarm.get("acknowledged_at"))
 
     def update_reading(self, temp_c: float, humidity: float) -> None:
         self.temp_c = round(float(temp_c), 2)
@@ -221,8 +237,58 @@ class Watchdog:
     def idle_display(self) -> tuple[str, str]:
         """What the matrix shows when no temporary message is running."""
         if self.alarm:
+            if self.alarm.get("acknowledged_at"):
+                return ("text", f"ACK {self.alarm['display_text']}")
             return ("alarm", self.alarm["display_text"])
         return ("temp", "")
+
+    # ----- Modulino Knob -----------------------------------------------
+    def knob_turn(self, steps: int) -> Outcome | None:
+        """Operator turned the knob; positive steps are clockwise detents.
+
+        KNOB_ACK_STEPS clockwise detents within KNOB_WINDOW_S acknowledge the
+        active alarm and/or the doors warning. Counter-clockwise resets the count.
+        """
+        now = self.clock()
+        if steps <= 0 or now - self.knob_last_ts > KNOB_WINDOW_S:
+            self.knob_steps = 0
+        self.knob_last_ts = now
+        if steps <= 0:
+            return None
+        self.knob_steps += steps
+        if self.knob_steps < KNOB_ACK_STEPS:
+            return None
+        self.knob_steps = 0
+
+        pending_alarm = self.alarm is not None and not self.alarm.get("acknowledged_at")
+        doors = self.doors_open()
+        if not pending_alarm and not doors:
+            return None
+
+        acknowledged = []
+        if pending_alarm:
+            self.alarm["acknowledged_at"] = now
+            self.alarm["acknowledged_by"] = "knob"
+            acknowledged.append(self.alarm["title"])
+        if doors:
+            self.doors_open_until = 0.0
+            acknowledged.append("doors left open")
+        self.ack_message_until = now + ACK_MESSAGE_SECONDS
+        msg = f"Acknowledged at the fridge (knob): {', '.join(acknowledged)}"
+        self._log("alarm_ack", msg)
+        payload = {
+            "alarm_kind": self.alarm["kind"] if self.alarm else None,
+            "code": self.alarm.get("protocol") if self.alarm else None,
+            "doors": doors,
+            "acknowledged_by": "knob",
+        }
+        return Outcome(
+            "knob_ack",
+            msg,
+            pattern=PATTERN_ACK,
+            display=("text", ACK_TEXT),
+            stubs=[("report_alarm_ack", payload)],
+        )
 
     # ----- commands ----------------------------------------------------
     def handle(self, command: str) -> Outcome:
@@ -366,6 +432,8 @@ class Watchdog:
         self.doors_open_until = 0.0
         self.fridge_hacked = False
         self.tamper_raised = False
+        self.knob_steps = 0
+        self.ack_message_until = 0.0
         msg = "Alarms cleared by operator"
         self._log("reset", msg)
         return Outcome("reset", msg, pattern=PATTERN_STOP, display=("temp", ""))

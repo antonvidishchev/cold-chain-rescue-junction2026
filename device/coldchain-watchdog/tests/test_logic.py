@@ -10,6 +10,9 @@ sys.path.insert(0, str(PY_DIR))
 from logic import (  # noqa: E402
     DOORS_ALARM_SECONDS,
     HANDLING_MINUTES,
+    KNOB_ACK_STEPS,
+    KNOB_WINDOW_S,
+    PATTERN_ACK,
     PATTERN_DOORS,
     PATTERN_STOP,
     PATTERN_UNFREEZE,
@@ -199,3 +202,99 @@ def test_reset_clears_hack(wd):
     assert wd.check_fridge_tamper() is None
     wd.handle("hack_fridge")
     assert wd.check_fridge_tamper() is not None  # armed again
+
+
+# ----- Modulino Knob acknowledgement --------------------------------------
+def turn(wd, clock, clicks, dt=0.1):
+    out = None
+    for _ in range(clicks):
+        clock.t += dt
+        out = wd.knob_turn(1) or out
+    return out
+
+
+def test_knob_acknowledges_power_outage(wd, clock):
+    wd.handle("power_outage")
+    protocol = wd.alarm["protocol"]
+    out = turn(wd, clock, KNOB_ACK_STEPS)
+    assert out is not None and out.command == "knob_ack"
+    assert out.pattern == PATTERN_ACK
+    assert out.display == ("text", "ALARM ACK")
+    assert [s for s, _ in out.stubs] == ["report_alarm_ack"]
+    alarm = wd.snapshot()["alarm"]
+    assert alarm["acknowledged_at"] == clock.t and alarm["acknowledged_by"] == "knob"
+    assert alarm["protocol"] == protocol and alarm["seconds_left"] > 0  # alarm stays visible
+    assert wd.idle_display() == ("text", f"ACK {protocol}")
+    assert wd.ack_message_active()
+    clock.t += 5
+    assert not wd.ack_message_active()
+    assert wd.events[0]["kind"] == "alarm_ack"
+
+
+def test_knob_needs_enough_clicks(wd, clock):
+    wd.handle("power_outage")
+    assert turn(wd, clock, KNOB_ACK_STEPS - 1) is None
+    assert not wd.alarm_acknowledged()
+
+
+def test_knob_clicks_must_be_within_window(wd, clock):
+    wd.handle("power_outage")
+    assert turn(wd, clock, KNOB_ACK_STEPS, dt=KNOB_WINDOW_S + 0.5) is None
+    assert not wd.alarm_acknowledged()
+
+
+def test_knob_counter_clockwise_resets_count(wd, clock):
+    wd.handle("power_outage")
+    turn(wd, clock, KNOB_ACK_STEPS - 1)
+    assert wd.knob_turn(-1) is None
+    assert turn(wd, clock, KNOB_ACK_STEPS - 1) is None
+    assert turn(wd, clock, 1) is not None
+
+
+def test_knob_multi_step_delta(wd, clock):
+    wd.handle("unfreeze")
+    assert wd.knob_turn(KNOB_ACK_STEPS) is not None
+    assert wd.idle_display() == ("text", "ACK CHECK")
+
+
+def test_knob_without_alarm_does_nothing(wd, clock):
+    assert turn(wd, clock, KNOB_ACK_STEPS * 2) is None
+    assert all(e["kind"] != "alarm_ack" for e in wd.events)
+
+
+def test_knob_second_ack_is_noop(wd, clock):
+    wd.handle("power_outage")
+    assert turn(wd, clock, KNOB_ACK_STEPS) is not None
+    assert turn(wd, clock, KNOB_ACK_STEPS) is None
+
+
+def test_knob_acknowledges_doors_warning(wd, clock):
+    wd.handle("doors_open")
+    out = turn(wd, clock, KNOB_ACK_STEPS)
+    assert out is not None and out.stubs[0][1]["doors"] is True
+    assert not wd.doors_open()
+    assert wd.alarm is None and wd.idle_display() == ("temp", "")
+
+
+def test_knob_acknowledges_h1(wd, clock):
+    wd.update_reading(4.5, 40)
+    wd.handle("hack_fridge")
+    wd.update_reading(12.0, 40)
+    assert wd.check_fridge_tamper() is not None
+    assert turn(wd, clock, KNOB_ACK_STEPS) is not None
+    assert wd.idle_display() == ("text", "ACK H1")
+
+
+def test_new_alarm_after_ack_is_unacknowledged(wd, clock):
+    wd.handle("unfreeze")
+    turn(wd, clock, KNOB_ACK_STEPS)
+    wd.handle("power_outage")
+    assert not wd.alarm_acknowledged()
+    assert wd.idle_display()[0] == "alarm"
+
+
+def test_reset_after_ack(wd, clock):
+    wd.handle("power_outage")
+    turn(wd, clock, KNOB_ACK_STEPS)
+    wd.handle("reset")
+    assert wd.alarm is None and not wd.ack_message_active() and wd.knob_steps == 0

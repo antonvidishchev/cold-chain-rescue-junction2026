@@ -18,7 +18,9 @@ with the Thermo and Buzzer attached; dashboard open on the projector.
 6. **The hack.** On the watchdog tab press *Simulate hacked fridge*. The
    fridge screen keeps showing 4.0 °C while it defrosts, but the Arduino sensor
    disagrees: the board sirens, the matrix shows `H1` and the dashboard shows
-   the mismatch. Open runbook section H1. (Legacy dashboard alternative: set
+   the mismatch. Turn the **knob** clockwise: the siren stops, the matrix
+   scrolls `ALARM ACK` then `ACK H1`, and the dashboard turns green with
+   "Alarm acknowledged at the fridge". Open runbook section H1. (Legacy dashboard alternative: set
    the *fridge self-report* slider for a TAMPER alert.)
 7. **Close.** "Monitoring is familiar. ColdChain Rescue coordinates the response."
 
