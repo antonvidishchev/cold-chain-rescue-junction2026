@@ -224,7 +224,8 @@ curl -X POST http://<board-ip>:7000/api/command/power_outage
 | `doors_open` | `CLOSE THE DOORS` marquee and seatbelt-style chime for 15 s | same |
 | `hack_fridge` (simulate hacked fridge) | The simulated smart fridge goes into defrost but its screen stays at 4.0 °C. The board compares the fridge feed with the Arduino sensor; when they differ by more than 2 °C: siren, matrix shows a warning sign and `H1`, dashboard shows the mismatch (runbook **H1**) | No alarm (nothing at risk) |
 | `empty` / `fill` | Empty the fridge or restore the full inventory | same |
-| *knob: 5 clicks clockwise* | Operator acknowledges the alarm at the fridge: buzzer stops, confirmation chirp, matrix scrolls `ALARM ACK` then `ACK <code>`; dashboard shows a green "acknowledged" banner, alarm and countdown stay until `reset`. Also ends the doors warning | No alarm: ignored |
+| *knob: 5 clicks clockwise* | Operator acknowledges the alarm at the fridge: buzzer stops, confirmation chirp, matrix scrolls `ALARM ACK` then `ACK <code>`; dashboard shows a green "acknowledged" banner, alarm and countdown stay. Also ends the doors warning | No alarm: ignored |
+| *knob: 5 clicks clockwise again* (after `ALARM ACK` has finished) | Protocol followed: alarm cleared like `reset`, two beeps, matrix shows `DONE` then the temperature | — |
 | `reset` | Operator clears alarms, buzzer stops, matrix shows the temperature | same |
 
 The protocol numbers refer to the printed [operator runbook](docs/runbook.md).

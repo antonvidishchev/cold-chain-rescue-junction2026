@@ -262,10 +262,38 @@ def test_knob_without_alarm_does_nothing(wd, clock):
     assert all(e["kind"] != "alarm_ack" for e in wd.events)
 
 
-def test_knob_second_ack_is_noop(wd, clock):
+def test_knob_ignored_while_ack_message_shows(wd, clock):
     wd.handle("power_outage")
     assert turn(wd, clock, KNOB_ACK_STEPS) is not None
-    assert turn(wd, clock, KNOB_ACK_STEPS) is None
+    assert turn(wd, clock, KNOB_ACK_STEPS) is None  # one long turn: no instant resolve
+    assert wd.alarm_acknowledged()
+
+
+def test_second_knob_turn_resolves_alarm(wd, clock):
+    wd.handle("power_outage")
+    turn(wd, clock, KNOB_ACK_STEPS)
+    clock.t += 6
+    out = turn(wd, clock, KNOB_ACK_STEPS)
+    assert out is not None and out.command == "knob_resolve"
+    assert out.pattern == PATTERN_ACK and out.display == ("text", "DONE")
+    assert [s for s, _ in out.stubs] == ["report_alarm_resolved"]
+    assert wd.alarm is None and wd.idle_display() == ("temp", "")
+    assert wd.events[0]["kind"] == "alarm_resolved"
+    clock.t += 6
+    assert not wd.ack_message_active()
+    assert turn(wd, clock, KNOB_ACK_STEPS) is None  # nothing left to do
+
+
+def test_resolving_h1_restores_healthy_fridge(wd, clock):
+    wd.update_reading(4.5, 40)
+    wd.handle("hack_fridge")
+    wd.update_reading(12.0, 40)
+    wd.check_fridge_tamper()
+    turn(wd, clock, KNOB_ACK_STEPS)
+    clock.t += 6
+    turn(wd, clock, KNOB_ACK_STEPS)
+    assert wd.alarm is None and not wd.fridge_hacked
+    assert wd.check_fridge_tamper() is None
 
 
 def test_knob_acknowledges_doors_warning(wd, clock):

@@ -36,7 +36,10 @@ export function WatchdogStatus({ state }: { state: BoardState }) {
 
       {alarm && acked && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-600 bg-emerald-950/80 px-4 py-3 text-emerald-200">
-          <div className="text-lg font-semibold">✓ Alarm acknowledged at the fridge</div>
+          <div>
+            <div className="text-lg font-semibold">✓ Alarm acknowledged at the fridge</div>
+            <div className="text-xs text-emerald-400">Turn the knob clockwise again once the protocol is done to clear the alarm.</div>
+          </div>
           <div className="text-sm text-emerald-300">
             {alarm.acknowledged_by === 'knob' ? 'Modulino Knob turned clockwise' : alarm.acknowledged_by} ·{' '}
             {new Date(alarm.acknowledged_at! * 1000).toLocaleTimeString()}

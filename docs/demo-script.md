@@ -20,7 +20,9 @@ with the Thermo and Buzzer attached; dashboard open on the projector.
    disagrees: the board sirens, the matrix shows `H1` and the dashboard shows
    the mismatch. Turn the **knob** clockwise: the siren stops, the matrix
    scrolls `ALARM ACK` then `ACK H1`, and the dashboard turns green with
-   "Alarm acknowledged at the fridge". Open runbook section H1. (Legacy dashboard alternative: set
+   "Alarm acknowledged at the fridge". Open runbook section H1. When the
+   protocol is done, turn the knob clockwise again: the matrix shows `DONE`
+   and the alarm clears. (Legacy dashboard alternative: set
    the *fridge self-report* slider for a TAMPER alert.)
 7. **Close.** "Monitoring is familiar. ColdChain Rescue coordinates the response."
 

@@ -12,7 +12,12 @@ hack code `H1`; the dashboard shows the same code), follow that section
 clockwise (about 5 clicks). The siren stops, two short rising beeps confirm,
 the matrix scrolls `ALARM ACK` and then `ACK P1` (or your code), and the
 dashboard shows "Alarm acknowledged at the fridge". The alarm stays open,
-with its countdown, until you press **Reset** on the dashboard.
+with its countdown, while you follow the protocol.
+
+**When the protocol is done:** turn the knob clockwise again (about 5 clicks,
+after `ALARM ACK` has finished). Two beeps, the matrix shows `DONE` and then
+the temperature, and the alarm disappears from the dashboard. **Reset** on the
+dashboard does the same.
 
 > Demo document for the Junction 2026 prototype. Storage limits are demo
 > values. In a real clinic, the product SmPC and the responsible pharmacist
@@ -129,7 +134,7 @@ be trusted. The Arduino sensor and a handheld thermometer can.**
 | Matrix: warning sign + `CHECK`, 2× three short beeps | Someone sent an **unfreeze / defrost** command to a fridge that is not empty. It was blocked. | Check whether anyone at the clinic requested a defrost. If not, treat it as a possible fridge hack: call IT security. Press **Reset** after checking. |
 | Matrix: warning sign + `H1`, two-tone siren for 10 s, then a chirp every 5 s | Smart fridge and Arduino sensor disagree by more than 2 °C: possible **hacked fridge**. | Follow section **H1** above. |
 | Matrix: scrolling `CLOSE THE DOORS`, seatbelt-style chime for 15 s | Fridge door left open. | Close the door. Check the temperature on the dashboard after 10 min. |
-| Matrix: scrolling `ACK P1` / `ACK H1` / `ACK CHECK` | The alarm was acknowledged with the knob and is still being handled. | Continue the protocol; press **Reset** when done. |
+| Matrix: scrolling `ACK P1` / `ACK H1` / `ACK CHECK` | The alarm was acknowledged with the knob and is still being handled. | Continue the protocol; when done, turn the knob clockwise again (or press **Reset**). |
 | Matrix: temperature only | Normal. | — |
 
 Unfreeze with an **empty** fridge is allowed and is only logged.

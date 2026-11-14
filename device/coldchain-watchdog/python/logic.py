@@ -26,6 +26,7 @@ KNOB_ACK_STEPS = 5
 KNOB_WINDOW_S = 3.0
 ACK_TEXT = "ALARM ACK"
 ACK_MESSAGE_SECONDS = 5
+RESOLVED_TEXT = "DONE"
 
 DOORS_ALARM_SECONDS = 15
 # Time to pack the stock into cool boxes and load the car, added to the drive.
@@ -259,10 +260,16 @@ class Watchdog:
         if self.knob_steps < KNOB_ACK_STEPS:
             return None
         self.knob_steps = 0
+        # Ignore turning while "ALARM ACK" / "DONE" is still on the matrix, so one
+        # long turn cannot acknowledge and resolve in a single gesture.
+        if self.ack_message_active():
+            return None
 
         pending_alarm = self.alarm is not None and not self.alarm.get("acknowledged_at")
         doors = self.doors_open()
         if not pending_alarm and not doors:
+            if self.alarm is not None:  # already acknowledged: protocol followed
+                return self._resolve_by_knob()
             return None
 
         acknowledged = []
@@ -427,13 +434,38 @@ class Watchdog:
         payload = {"inventory": [{"id": m["id"], "quantity": m["quantity"]} for m in self.inventory]}
         return Outcome("fill", msg, stubs=[("sync_inventory", payload)])
 
-    def _cmd_reset(self) -> Outcome:
+    def _resolve_by_knob(self) -> Outcome:
+        """Second clockwise turn after the acknowledgement: protocol followed, clear the alarm."""
+        alarm = self.alarm
+        now = self.clock()
+        self._clear_alarms()
+        self.ack_message_until = now + ACK_MESSAGE_SECONDS
+        msg = f"Protocol followed, alarm resolved at the fridge (knob): {alarm['title']}"
+        self._log("alarm_resolved", msg)
+        payload = {
+            "alarm_kind": alarm["kind"],
+            "code": alarm.get("protocol"),
+            "acknowledged_at": alarm.get("acknowledged_at"),
+            "resolved_by": "knob",
+        }
+        return Outcome(
+            "knob_resolve",
+            msg,
+            pattern=PATTERN_ACK,
+            display=("text", RESOLVED_TEXT),
+            stubs=[("report_alarm_resolved", payload)],
+        )
+
+    def _clear_alarms(self) -> None:
         self.alarm = None
         self.doors_open_until = 0.0
         self.fridge_hacked = False
         self.tamper_raised = False
         self.knob_steps = 0
         self.ack_message_until = 0.0
+
+    def _cmd_reset(self) -> Outcome:
+        self._clear_alarms()
         msg = "Alarms cleared by operator"
         self._log("reset", msg)
         return Outcome("reset", msg, pattern=PATTERN_STOP, display=("temp", ""))
