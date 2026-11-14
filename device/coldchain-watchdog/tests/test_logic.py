@@ -140,6 +140,27 @@ def test_reset_clears_alarm(wd):
     assert wd.alarm is None and out.pattern == PATTERN_STOP and out.display == ("temp", "")
 
 
+def test_reset_reports_active_alarm_resolved(wd, clock):
+    wd.handle("power_outage")
+    turn(wd, clock, KNOB_ACK_STEPS)
+    out = wd.handle("reset")
+    assert out.stubs == [("report_alarm_resolved", {
+        "alarm_kind": "power_outage", "code": "P1", "acknowledged_at": clock.t,
+        "doors": False, "resolved_by": "reset",
+    })]
+
+
+def test_reset_reports_doors_only(wd):
+    wd.handle("doors_open")
+    (name, payload), = wd.handle("reset").stubs
+    assert name == "report_alarm_resolved"
+    assert payload["alarm_kind"] is None and payload["doors"] is True
+
+
+def test_reset_without_alarm_reports_nothing(wd):
+    assert wd.handle("reset").stubs == []
+
+
 def test_unknown_command(wd):
     with pytest.raises(ValueError):
         wd.handle("self_destruct")

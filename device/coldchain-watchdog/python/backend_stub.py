@@ -245,7 +245,7 @@ def report_alarm_ack(data: dict[str, Any]) -> dict[str, Any]:
 
 
 def report_alarm_resolved(data: dict[str, Any]) -> dict[str, Any]:
-    """Operator confirmed at the fridge (second knob turn) that the protocol was followed."""
+    """Alarm resolved: second knob turn (protocol followed) or the reset command."""
     return _send("/api/events/alarm-resolved", "alarm_resolved", data)
 
 

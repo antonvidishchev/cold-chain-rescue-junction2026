@@ -524,9 +524,24 @@ class Watchdog:
         self.ack_message_until = 0.0
 
     def _cmd_reset(self) -> Outcome:
+        """Operator clears everything; any active alarm is reported as resolved."""
+        alarm = self.alarm
+        doors = self.doors_open()
         self._clear_alarms()
         self.power_out = False
         self.defrosting = False
         msg = "Alarms cleared by operator"
         self._log("reset", msg)
-        return Outcome("reset", msg, pattern=PATTERN_STOP, display=("temp", ""))
+        stubs: list[tuple[str, dict[str, Any]]] = []
+        if alarm is not None or doors:
+            stubs.append((
+                "report_alarm_resolved",
+                {
+                    "alarm_kind": alarm["kind"] if alarm else None,
+                    "code": alarm.get("protocol") if alarm else None,
+                    "acknowledged_at": alarm.get("acknowledged_at") if alarm else None,
+                    "doors": doors,
+                    "resolved_by": "reset",
+                },
+            ))
+        return Outcome("reset", msg, pattern=PATTERN_STOP, display=("temp", ""), stubs=stubs)

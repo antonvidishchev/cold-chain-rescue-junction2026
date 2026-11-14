@@ -102,10 +102,18 @@ class AlarmAckData(Data):
 
 
 class AlarmResolvedData(Data):
-    alarm_kind: AlarmKind
+    # Null kind only for a reset that cleared nothing but the doors warning.
+    alarm_kind: AlarmKind | None
     code: AlarmCode | None
     acknowledged_at: float | None = Field(ge=0, le=253402300799)
-    resolved_by: Literal["knob"]
+    doors: bool = False
+    resolved_by: Literal["knob", "reset"]
+
+    @model_validator(mode="after")
+    def something_resolved(self):
+        if self.alarm_kind is None and not self.doors:
+            raise ValueError("alarm_resolved needs alarm_kind or doors")
+        return self
 
 
 D = TypeVar("D", bound=Data)
@@ -219,16 +227,25 @@ def ingest_watchdog(service, body: Envelope) -> dict:
                 kinds = {kind} if kind else set()
                 if data.get("doors"):
                     kinds.add("DOORS_OPEN")
+                resolving = event == "alarm_resolved"
                 for alert in state["alerts"].values():
-                    if (alert["location_id"] != location["id"] or alert["type"] not in kinds
-                            or alert.get("recovered_at") is not None or body.ts < alert["created_at"]):
+                    if alert["location_id"] != location["id"] or alert["type"] not in kinds or body.ts < alert["created_at"]:
                         continue
-                    # A knob gesture is operator testimony, not temperature/power recovery evidence.
-                    if event == "alarm_acknowledged":
+                    # Acknowledge only live incidents; resolve any not yet resolved.
+                    if alert.get("recovered_at") is not None if not resolving else alert["status"] == "resolved":
+                        continue
+                    if not resolving:
                         alert.update(status="acknowledged", acknowledged_by="knob", acknowledged_at=body.ts,
                                      device_acknowledged_at=body.ts, device_acknowledged_by="knob")
-                    else:
-                        alert.update(device_resolved_at=body.ts, device_resolved_by="knob")
+                        continue
+                    # The operator at the fridge confirms the protocol was followed
+                    # (knob) or cleared the alarm (reset): close the incident.
+                    by = data["resolved_by"]
+                    alert.update(status="resolved", resolved_at=body.ts, resolved_by=by,
+                                 recovered_at=alert.get("recovered_at") or body.ts,
+                                 device_resolved_at=body.ts, device_resolved_by=by)
+                    if alert["type"] == "POWER_LOSS" and by == "reset":
+                        location["power_on"] = True
             elif event == "doors_open":
                 service._incident(state, location, "DOORS_OPEN", True, "Device reports doors left open; inspect the unit")
             elif event == "unfreeze_check_required":
