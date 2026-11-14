@@ -1,9 +1,9 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
-import App from './App';
+import App, { IncidentCard } from './App';
 import { catalogueClinics } from './clinic-fixtures';
-import { connectivity, measurement, normalizeBase, request, type Clinic } from './api';
+import { connectivity, measurement, normalizeBase, request, type Clinic, type Incident } from './api';
 vi.mock('./ClinicMap', () => ({ default: () => <div aria-label="Map stub" /> }));
 const now = new Date().toISOString();
 const clinic = (id: string, city: string, temp: number | null = null): Clinic => ({ id, city, clinic_id: city.toLowerCase(), name: `${city} Demo Clinic (fictional)`, synthetic: true, last_temp_c: temp, last_reading_at: temp == null ? null : now, alarm_state: 'NORMAL', power_on: true, effective_range: { min_c: 2, max_c: 8 }, devices: [{ id: `unoq-${id}`, last_seen: now, status: 'nominal' }], used_units: 0, free_units: 10 });
@@ -174,6 +174,85 @@ describe('public dashboard', () => {
     expect(screen.queryByText('PRIVATE DATA')).not.toBeInTheDocument();
     expect(document.querySelector('.photo-description script')).toBeNull();
     expect(screen.getByRole('img', { name: /Synthetic camera/ })).toHaveAttribute('src', expect.stringContaining('/images/public/content'));
+  });
+});
+const publicIncident = (): Incident => ({
+  id: 101, location_id: 'fridge-a', type: 'POWER_LOSS', message: 'Power interrupted', status: 'open',
+  created_at: now, recovered_at: null, protocol: null, user_resolved_at: null, resolution_source: null,
+  checklist: ['inspect', 'protect', 'verify'].map(id => ({ id, label: `Legacy ${id} label`, done: false })),
+});
+describe('public incident checklist', () => {
+  it('sends only public endpoint patches and resolves only on the third persisted confirmation', async () => {
+    let stored = publicIncident();
+    const fetcher = vi.fn((input: string, options?: RequestInit) => {
+      const id = new URL(input).pathname.split('/').at(-1);
+      stored = { ...stored, checklist: stored.checklist.map(item => item.id === id ? { ...item, done: JSON.parse(String(options?.body)).done } : item) };
+      if (stored.checklist.every(item => item.done)) stored = { ...stored, status: 'resolved_by_user', user_resolved_at: now, resolution_source: 'public_checklist' };
+      return Promise.resolve(json(stored));
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const onSaved = vi.fn();
+    render(<IncidentCard incident={publicIncident()} timeline={[]} onSaved={onSaved} />);
+    expect(screen.queryByText(/Legacy/)).not.toBeInTheDocument();
+    for (const label of ['Unit is inspected', 'Incident acted upon. Stock transferred to another unit or location', 'Recovery verified']) {
+      await userEvent.click(screen.getByRole('checkbox', { name: label }));
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: label })).toBeChecked());
+      if (label !== 'Recovery verified') expect(screen.queryByText('Resolved by user', { exact: true })).not.toBeInTheDocument();
+    }
+    expect(screen.getByText('Resolved by user', { exact: true })).toHaveClass('neutral');
+    expect(screen.getByText('User confirmation; does not change measured temperature, power or inventory')).toBeInTheDocument();
+    expect(screen.queryByText(/Recovery observed|sensor recovery/i)).not.toBeInTheDocument();
+    for (const checkbox of screen.getAllByRole('checkbox')) expect(checkbox).toBeDisabled();
+    expect(onSaved).toHaveBeenCalledTimes(3);
+    expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['inspect', 'protect', 'verify'].map(id => `/api/alerts/101/public-checklist/${id}`));
+    for (const [, options] of fetcher.mock.calls) {
+      expect(options).toMatchObject({ method: 'PATCH', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: '{"done":true}' });
+      expect(options?.headers).not.toHaveProperty('Authorization');
+    }
+  });
+  it('disables the entire checklist while pending, allows unchecking unresolved items and resists stale polling', async () => {
+    let complete!: (response: Response) => void;
+    const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => { complete = resolve; })).mockResolvedValueOnce(json(publicIncident()));
+    vi.stubGlobal('fetch', fetcher);
+    const original = publicIncident();
+    const { rerender } = render(<IncidentCard incident={original} timeline={[]} />);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Unit is inspected' }));
+    for (const checkbox of screen.getAllByRole('checkbox')) expect(checkbox).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'Unit is inspected' })).not.toBeChecked();
+    const saved = { ...original, checklist: original.checklist.map(item => ({ ...item, done: item.id === 'inspect' })) };
+    await act(async () => complete(json(saved)));
+    rerender(<IncidentCard incident={{ ...original }} timeline={[]} />);
+    expect(screen.getByRole('checkbox', { name: 'Unit is inspected' })).toBeChecked();
+    rerender(<IncidentCard incident={saved} timeline={[]} />);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Unit is inspected' }));
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Unit is inspected' })).not.toBeChecked());
+    expect(fetcher.mock.calls[1][1].body).toBe('{"done":false}');
+    rerender(<IncidentCard incident={{ ...saved }} timeline={[]} />);
+    expect(screen.getByRole('checkbox', { name: 'Unit is inspected' })).not.toBeChecked();
+    rerender(<IncidentCard incident={publicIncident()} timeline={[]} />);
+    const next = { ...saved, checklist: saved.checklist.map(item => ({ ...item, done: item.id === 'protect' })) };
+    rerender(<IncidentCard incident={next} timeline={[]} />);
+    expect(screen.getByRole('checkbox', { name: 'Incident acted upon. Stock transferred to another unit or location' })).toBeChecked();
+  });
+  it('does not falsely resolve or persist failed final confirmation and supports retry', async () => {
+    const incident = publicIncident();
+    incident.checklist[0].done = incident.checklist[1].done = true;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('private diagnostics', { status: 503 })));
+    render(<IncidentCard incident={incident} timeline={[]} />);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Recovery verified' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('503');
+    expect(screen.getByRole('alert')).not.toHaveTextContent('private diagnostics');
+    expect(screen.getByRole('checkbox', { name: 'Recovery verified' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Recovery verified' })).toBeEnabled();
+    expect(screen.queryByText('Resolved by user', { exact: true })).not.toBeInTheDocument();
+  });
+  it.each(['resolved_by_user', 'resolved'])('renders resolved history %s without warning colors or editable controls', status => {
+    render(<IncidentCard incident={{ ...publicIncident(), status, recovered_at: status === 'resolved_by_user' ? now : null }} timeline={[]} />);
+    for (const checkbox of screen.getAllByRole('checkbox')) expect(checkbox).toBeDisabled();
+    expect(document.querySelector('.incident-symbol')).toHaveClass('recovered');
+    expect(document.querySelector('.incident-card .badge')).toHaveClass('neutral');
+    expect(screen.queryByText(/Recovery observed/)).not.toBeInTheDocument();
+    if (status === 'resolved_by_user') expect(screen.getByText(/Resolved by user/, { selector: 'p' })).toHaveTextContent('Not observed');
   });
 });
 describe('contract safeguards', () => {

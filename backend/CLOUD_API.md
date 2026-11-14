@@ -4,7 +4,7 @@ Entry point: `app.cloud.api:app` (independent of the legacy SQLite app). All rou
 
 ## Authentication and storage
 
-Public GETs require no key. Device GETs and writes require **both** `x-functions-key: <COLDCHAIN_DEVICE_FUNCTION_KEY>` and `x-device-key: <key for that device>`. `COLDCHAIN_DEVICE_KEYS` is a JSON object mapping device IDs to nonempty keys. Operator mutations require `x-functions-key: <COLDCHAIN_OPERATOR_KEY>`. Checks are app-level, use constant-time comparison, and reject missing/empty configured credentials. An anonymous Functions HTTP trigger does **not** authenticate these keys. Operator keys do not substitute for device keys. Do not embed operator/device credentials into a public frontend bundle.
+Public GETs and the explicitly scoped public-checklist PATCH below require no key. All other mutations remain authenticated. Device GETs and writes require **both** `x-functions-key: <COLDCHAIN_DEVICE_FUNCTION_KEY>` and `x-device-key: <key for that device>`. `COLDCHAIN_DEVICE_KEYS` is a JSON object mapping device IDs to nonempty keys. Operator mutations require `x-functions-key: <COLDCHAIN_OPERATOR_KEY>`. Checks are app-level, use constant-time comparison, and reject missing/empty configured credentials. An anonymous Functions HTTP trigger does **not** authenticate these keys. Operator keys do not substitute for device keys. Do not embed operator/device credentials into a public frontend bundle.
 
 Credentials never come from Table records. Public devices are allowlisted; nested secret-like fields and storage blob names are filtered. Only explicitly synthetic image content/descriptions are public. Do not mark real patient/clinic photographs synthetic.
 
@@ -52,7 +52,7 @@ Seeds are fictional Helsinki (`fridge-a`), Espoo (`fridge-b`), Tampere (`clinic-
 | GET `/inventory`, `/clinics` | — | Location array including stock with embedded products, devices, used/free_units, effective_range, stock_present, live temperature/power/alarm state |
 | GET `/devices` | — | Sanitized device array: id, location_id, clinic_id, last_seen, last_seq, silenced, status and observed/registered timestamps |
 | GET `/readings` | Optional `location_id`, `device_id`, `limit` (1–1000, default 300), UTC `since`/`until` | Default last 24 hours; explicit window at most seven days. Latest matching readings returned chronologically; fields id, device_id, location_id, clinic_id, ts, observed_at, temp_c, alarm_active, seq, event_id, received_at, stale |
-| GET `/alerts` | Optional `status` | Alerts newest first; open/acknowledged/resolved |
+| GET `/alerts` | Optional `status` | Alerts newest first; open/acknowledged/resolved/resolved_by_user |
 | GET `/alerts/{id}` | — | Single alert including protocol, checklist and recovered_at |
 | GET `/alerts/{id}/checklist` | — | Checklist item array |
 | GET `/alerts/{id}/timeline` | — | Timeline events for that alert |
@@ -175,6 +175,48 @@ Default JPEG byte limit 5 MiB, pixel limit 12,000,000; multipart overhead capped
 
 Response `{ok:true,id:"...",image_id:"...",status:"pending",duplicate:false}`. Record kind is exactly `ImageAnalyses`; blob_name is id + `.jpg`. Record exists before upload/queue, preventing event ID reassignment to different bytes. Duplicate event IDs with different bytes/synthetic flag/explicit timestamp return 409. Failed upload/enqueue returns 503 and leaves pending for retry/timer recovery; retrying the same event ID safely reattempts upload/enqueue. The parent worker owns processing/completed/failed/terminal retry behavior. Queue is at-least-once; processing uses conditional claims.
 
+## Public checklist updates
+
+PATCH `/alerts/{alert_id}/public-checklist/{item_id}` requires no credentials and accepts
+only `{"done":true}` or `{"done":false}` (strict JSON boolean, no extra fields or actor).
+Alert IDs are bounded numeric strings (1–128 characters); item IDs are exactly
+`inspect`, `protect`, `verify`. Unknown records return 404, invalid paths/body 422,
+bodies exceeding 128 bytes 413. No other operator/device endpoint becomes public.
+
+Returns **200 with the full sanitized Incident JSON**, identical to GET `/alerts/{id}`,
+not an item or wrapper. Checklist items retain `id`, `label`, `done`, plus `by:"public user"`
+and UTC ISO `updated_at` after a change. Fresh incidents and public legacy displays use:
+
+1. `inspect`: `Unit is inspected`
+2. `protect`: `Incident acted upon. Stock transferred to another unit or location`
+3. `verify`: `Recovery verified`
+
+Legacy stored labels are not mass-migrated. Partial changes keep incident status unchanged
+and add a `public_checklist` timeline entry with item ID, done and fixed actor. Before
+completion items can be unchecked. Identical updates are idempotent and add no audit.
+Checking all three commits atomically with `status:"resolved_by_user"`,
+`user_resolved_at:<UTC ISO timestamp>`, `resolution_source:"public_checklist"`,
+`user_resolved_by:"public user"` and one additional `resolved_by_user` timeline entry.
+`recovered_at` is preserved exactly, including null. No `resolved_at` is invented.
+
+These labels record **public user testimony**, not sensor recovery, actual stock movement
+or clinical safety certification. Measurements/history, power, inventory, devices, commands
+and transfers are unchanged. Alarm aggregation excludes the completed incident without
+inventing recovery; a fresh adverse reading/report may create a new incident with unchecked
+items. Subsequent sensor recovery/knob reports do not modify the user-completed record.
+Once user-completed, attempts to uncheck return 409; duplicate `done:true` returns the
+existing Incident without another audit. Already operator-resolved incidents reject public
+edits with 409. Operator ack/resolve/checklist writes to user-completed records also reject
+409, preventing accidental reopening; sensor-backed operator resolution otherwise remains unchanged.
+
+The public route enforces 30 requests per fixed 60-second window per connection-client IP
+per application process, including invalid attempts and duplicates. Excess returns 429 with
+`Retry-After:60`. Tracking is capped at 4096 clients and fails closed when full. Forwarded
+headers are not trusted here. **Abuse risk remains:** anonymous users can attest falsely;
+multiple processes/IPs can bypass this local quota, and a reverse proxy may share one IP.
+Production needs trusted edge/distributed rate limiting and appropriate access controls;
+this demo exception must not be treated as a clinical authorization mechanism.
+
 ## Operator mutations
 
 All endpoints in this section require the **operator** function key.
@@ -210,7 +252,7 @@ Configurable positive limits: COLDCHAIN_RISE_C, COLDCHAIN_RISE_WINDOW_SECONDS, C
 - Telemetry inserts an individual event-deduplication record and a durable Outbox row in the same transaction as device/location/incident updates. Projection creates the individual Readings row in its own partition and removes the outbox row only after success. Notifications use the same pattern. A crash between operations is recovered create-only on retry/timer; histories are not lost or appended twice. Clients should retry with the same event_id after transient projection errors.
 - Each device keeps a bounded recent rule-evaluation window (at most 1024 samples under default settings), not full history. Coverage is retained for the five-minute rise rule and prior boundary sample; exceptionally dense streams that evict coverage do not falsely trigger the rise rule. Raw history and deduplication events stay in individual entities. Tests ingest 21,600 readings: three days at 7,200 readings/day across five devices, preserving first-day deduplication while device/meta record sizes remain bounded.
 - Individual records, not datasets, have a defensive 420,000-serialized-ASCII-character cap (840,000 UTF-16 bytes plus entity overhead). Each property chunk is at most 30,000 ASCII characters/60,000 UTF-16 bytes, below Azure's 64-KiB string property limit. Ordinary telemetry rows are far smaller. No silent retention eviction is implemented; storage consumption grows by individual rows and requires an operational lifecycle policy for long-term production use.
-- No application-level per-client rate limiter is implemented. Apply authenticated gateway/body/abuse limits before public deployment. Readings use server-side device/location/time predicates, a 24-hour default window and a seven-day maximum explicit window. Table secondary-property queries may still scan the reading partition; date-sharded partitions/indexes are a future high-volume optimization. Other lists are currently unpaginated. The shared transactional revision row favors correctness at demo-scale throughput rather than claiming unlimited write scaling.
+- Only the public-checklist PATCH has an application-level per-client rate limiter (30/minute/IP/process, described above). Other routes have no such limiter. Apply authenticated gateway/body/abuse limits before public deployment. Readings use server-side device/location/time predicates, a 24-hour default window and a seven-day maximum explicit window. Table secondary-property queries may still scan the reading partition; date-sharded partitions/indexes are a future high-volume optimization. Other lists are currently unpaginated. The shared transactional revision row favors correctness at demo-scale throughput rather than claiming unlimited write scaling.
 - `MemoryStore` and `AzureTableStore` expose get/list/create/put/delete; get/list return versioned dicts. Existing `put` requires the versioned dict read from the store, not a newly constructed plain dict. Re-read after a successful put. `compare_and_swap(kind,key,expected,replacement)` supports atomic cross-worker claims; expected may be a dict snapshot or versioned record. Direct create is create-if-absent. Azure keys are SHA-256 encoded, so arbitrary logical IDs never become invalid Table keys.
 - IDs remain stable for the legacy demo locations, but the clinic count is now five, addresses/names are fictional, command polling no longer consumes commands, alert resolution requires recovery, and older readings no longer overwrite latest state. There is no WebSocket broadcast endpoint in this cloud app; poll public reads. No API is added to register arbitrary devices or modify credentials.
 - Legacy REST paths already include `/api`; no unprefixed aliases are introduced. Error convention: 401 authentication, 404 unknown record/private content, 409 conflict/state precondition, 413 size, 415 format, 422 payload, 503 media dependency failure. Infrastructure/individual-record/batch-capacity failures can surface as 500 and require operator investigation.
@@ -223,6 +265,6 @@ Run without the legacy test conftest (which otherwise configures SQLite and crea
 .venv\Scripts\python.exe -m pytest --noconftest -p no:cacheprovider tests\test_cloud_api.py tests\test_cloud_store.py -q
 ```
 
-Tests cover explicit seeding, default thresholds, both key layers, operator protection, public sanitization, event replay, late observations, covered rise windows, recovery versus acknowledgement, command expiry/non-consuming polls/idempotent ACK, atomic concurrent deduplication, transfer revalidation/rollback, bounded image validation, queue retries, safe Table keys/property chunks and ETag conflicts. The 21,600-reading test verifies three days across five devices without dataset/entity growth limits. Store tests also prove all-or-nothing multi-record conflicts and crash-replayable projections. Set `COLDCHAIN_TEST_AZURITE` to an isolated local emulator connection to run the opt-in actual Table transaction/bootstrap/ingestion/transfer test; parent-owned integration tests additionally cover Blob/Queue and worker operations. No live Azure resources are required.
+Tests cover explicit seeding, default thresholds, both key layers, operator protection, public sanitization, strict/bounded anonymous checklist edits, partial/atomic concurrent completion, idempotent audit, unchanged measurements/inventory/recovery, immutable user-completed incidents, new adverse incidents, local rate limits, event replay, late observations, covered rise windows, recovery versus acknowledgement, command expiry/non-consuming polls/idempotent ACK, atomic concurrent deduplication, transfer revalidation/rollback, bounded image validation, queue retries, safe Table keys/property chunks and ETag conflicts. The 21,600-reading test verifies three days across five devices without dataset/entity growth limits. Store tests also prove all-or-nothing multi-record conflicts and crash-replayable projections. Set `COLDCHAIN_TEST_AZURITE` to an isolated local emulator connection to run the opt-in actual Table transaction/bootstrap/ingestion/transfer test; parent-owned integration tests additionally cover Blob/Queue and worker operations. No live Azure resources are required.
 
 Azure reference: [TableClient Python API](https://learn.microsoft.com/python/api/azure-data-tables/azure.data.tables.tableclient), including conditional ETag update semantics.

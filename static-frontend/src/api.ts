@@ -30,6 +30,7 @@ export interface WatchdogEvent {
 export interface Incident {
   id: number; location_id: string; type: string; message: string; status: string;
   created_at: string; recovered_at: string | null; protocol: number | string | null;
+  resolved_by_user?: boolean; user_resolved_at?: string | null; user_resolved_by?: string | null; resolution_source?: string | null;
   device_acknowledged_at?: string | null; device_acknowledged_by?: 'knob';
   device_resolved_at?: string | null; device_resolved_by?: 'knob';
   device_reported_protocol?: string | null; assessment_source?: string;
@@ -68,6 +69,11 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   if (!response.ok) throw new ServiceError(response.status);
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+export function updatePublicChecklist(id: number, itemId: string, done: boolean): Promise<Incident> {
+  return request<Incident>(`/alerts/${encodeURIComponent(id)}/public-checklist/${encodeURIComponent(itemId)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ done }),
+  });
 }
 export async function getList<T>(path: string, signal: AbortSignal): Promise<T[]> {
   const value = await request<unknown>(path, { signal });
