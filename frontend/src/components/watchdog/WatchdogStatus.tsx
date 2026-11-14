@@ -15,15 +15,6 @@ const CAMERA_LABELS: Record<CameraFrame['frame'], string> = {
 
 const ALL_FRAMES = Object.keys(CAMERA_LABELS) as CameraFrame['frame'][]
 
-function formatCountdown(seconds: number) {
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  const s = seconds % 60
-  const mm = String(m).padStart(2, '0')
-  const ss = String(s).padStart(2, '0')
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
-}
-
 export function WatchdogStatus({ state }: { state: BoardState }) {
   const { alarm } = state
   const acked = alarm?.acknowledged_at != null
@@ -42,49 +33,6 @@ export function WatchdogStatus({ state }: { state: BoardState }) {
       <SmartFridgePanel state={state} />
 
       <CameraPanel state={state} tone={alarmTone} />
-
-      {state.doors_open && (
-        <div className="overflow-hidden rounded-xl border border-amber-600 bg-amber-950 py-3 text-amber-200">
-          <div className="marquee whitespace-nowrap text-2xl font-bold tracking-widest">
-            ⚠ CLOSE THE DOORS ⚠ CLOSE THE DOORS ⚠ CLOSE THE DOORS ({state.doors_seconds_left} s)
-          </div>
-        </div>
-      )}
-
-      {alarm && acked && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-600 bg-emerald-950/80 px-4 py-3 text-emerald-200">
-          <div>
-            <div className="text-lg font-semibold">✓ Alarm acknowledged at the fridge</div>
-            <div className="text-xs text-emerald-400">Turn the knob clockwise again once the protocol is done to clear the alarm.</div>
-          </div>
-          <div className="text-sm text-emerald-300">
-            {alarm.acknowledged_by === 'knob' ? 'Modulino Knob turned clockwise' : alarm.acknowledged_by} ·{' '}
-            {new Date(alarm.acknowledged_at! * 1000).toLocaleTimeString()}
-          </div>
-        </div>
-      )}
-
-      {alarm && (
-        <div className={`rounded-xl border p-4 ${acked ? 'border-slate-600 bg-slate-900' : alarm.severity === 'critical' ? 'border-red-600 bg-red-950/80' : 'border-amber-600 bg-amber-950/70'}`}>
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <div className="text-xs uppercase tracking-wider text-slate-300">⚠ {alarm.title}</div>
-              <p className="mt-1 text-sm text-slate-100">{alarm.message}</p>
-              {alarm.protocol_title && (
-                <p className="mt-2 text-sm font-semibold">Runbook {alarm.protocol}: {alarm.protocol_title}</p>
-              )}
-            </div>
-            {alarm.protocol && (
-              <div className="text-right">
-                <div className="text-5xl font-black text-red-300">{alarm.protocol}</div>
-                {alarm.seconds_left != null && (
-                  <div className="mt-1 font-mono text-lg text-red-200">{formatCountdown(alarm.seconds_left)} left</div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

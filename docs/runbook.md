@@ -1,3 +1,8 @@
+<!-- The Watchdog dashboard shows sections of this file on screen
+(frontend/src/runbook.ts). Keep the `## P1 — …` / `## H1 — …` headings, the
+numbered steps, the "Other watchdog alarms" table and the bold
+"Acknowledge at the fridge first:" / "When the protocol is done:" labels. -->
+
 # ColdChain Watchdog — Operator Runbook
 
 **Site:** Espoonlahti Clinic (main site), Vanha Jorvaksentie 3, 02320 Espoo

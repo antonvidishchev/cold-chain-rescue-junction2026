@@ -225,11 +225,16 @@ curl -X POST http://<board-ip>:7000/api/command/power_outage
 | `doors_open` | `CLOSE THE DOORS` marquee and seatbelt-style chime for 15 s | same |
 | `hack_fridge` (simulate hacked fridge) | The simulated smart fridge goes into defrost but its screen stays at 4.0 °C. The board compares the fridge feed with the Arduino sensor; when they differ by more than 2 °C: siren, matrix shows a warning sign and `H1`, dashboard shows the mismatch (runbook **H1**) | No alarm (nothing at risk) |
 | `empty` / `fill` | Empty the fridge or restore the full inventory | same |
-| *knob: 5 clicks clockwise* | Operator acknowledges the alarm at the fridge: buzzer stops, confirmation chirp, matrix scrolls `ALARM ACK` then `ACK <code>`; dashboard shows a green "acknowledged" banner, alarm and countdown stay. Also ends the doors warning | No alarm: ignored |
+| *knob: 5 clicks clockwise* | Operator acknowledges the alarm at the fridge: buzzer stops, confirmation chirp, matrix scrolls `ALARM ACK` then `ACK <code>`; dashboard turns the runbook panel green ("acknowledged"), alarm and countdown stay. Also ends the doors warning | No alarm: ignored |
 | *knob: 5 clicks clockwise again* (after `ALARM ACK` has finished) | Protocol followed: alarm cleared, two beeps, matrix shows `DONE` then the temperature. For a power outage the stock has been moved to other clinics: the fridge is emptied (inventory synced) and stays without power until `reset` | — |
 | `reset` | Operator clears alarms, buzzer stops, matrix shows the temperature | same |
 
 The protocol numbers refer to the printed [operator runbook](docs/runbook.md).
+While an alarm or the doors warning is active, the dashboard puts that runbook
+section on top of the page: the numbered steps in large type, read from
+`docs/runbook.md` at build time (so screen and printout always match), next to
+the live call list, the sensor/fridge temperatures (H1) or the escalation time
+(P3), and the knob instruction.
 With the full demo inventory a power outage gives **P1**: the stock is safe
 for 60 min and 4 clinics are reachable (drive time + 15 min packing).
 
