@@ -81,7 +81,9 @@ _optional_telemetry_fields = {"fridge_display_temp_c"}
 _dropped_fields: set[str] = set()
 
 
-def _post(path: str, payload: dict[str, Any], timeout: float = HTTP_TIMEOUT) -> tuple[int | None, str]:
+def _post(path: str, payload: dict[str, Any], timeout: float | None = None) -> tuple[int | None, str]:
+    # Default resolved per call (not at import) so the timeout stays configurable.
+    timeout = HTTP_TIMEOUT if timeout is None else timeout
     req = urllib.request.Request(
         f"{API_URL}{path}",
         data=json.dumps(payload).encode(),
@@ -102,7 +104,7 @@ def _backoff(attempt: int) -> float:
     return min(30.0, 0.5 * 2.0 ** (attempt - 1)) + random.random() * 0.5
 
 
-def _deliver(path: str, payload: dict[str, Any], max_attempts: int, timeout: float = HTTP_TIMEOUT) -> bool:
+def _deliver(path: str, payload: dict[str, Any], max_attempts: int, timeout: float | None = None) -> bool:
     """POST with retries; the same event_id/ts/payload is reused so retries are idempotent."""
     attempt, status, body = 0, None, ""
     while attempt < max_attempts:
