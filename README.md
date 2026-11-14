@@ -1,6 +1,6 @@
 # ColdChain Rescue
 
-> **Zero trust. Zero cloud. Zero Vaccines lost.**
+> *Zero trust. Zero cloud. Zero Vaccines lost.*
 
 ColdChain Rescue is an independent hardware watchdog sits on edge colocated with fridges. 
 It detects:
