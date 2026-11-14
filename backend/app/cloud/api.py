@@ -17,7 +17,8 @@ from app.cloud.auth import require_device, require_operator
 from app.cloud.service import CloudService, observed, stamp, utcnow
 from app.cloud.settings import Settings
 from app.cloud.store import ConflictError, get_store
-from app.cloud.watchdog import (DoorsOpen, InventorySync, PowerOutage, Telemetry,
+from app.cloud.watchdog import (AlarmAck, AlarmResolved, DoorsOpen, FridgeTamper,
+                                InventorySync, PowerOutage, Telemetry,
                                 UnfreezeAllowed, UnfreezeCheck, ingest_watchdog)
 
 
@@ -208,6 +209,21 @@ def create_app(store=None, media=None) -> FastAPI:
 
     @application.post("/api/events/doors-open")
     def doors_open(body: DoorsOpen, request: Request):
+        require_device(request, body.device_id)
+        return ingest_watchdog(service(), body)
+
+    @application.post("/api/events/fridge-tamper")
+    def fridge_tamper(body: FridgeTamper, request: Request):
+        require_device(request, body.device_id)
+        return ingest_watchdog(service(), body)
+
+    @application.post("/api/events/alarm-ack")
+    def alarm_ack(body: AlarmAck, request: Request):
+        require_device(request, body.device_id)
+        return ingest_watchdog(service(), body)
+
+    @application.post("/api/events/alarm-resolved")
+    def alarm_resolved(body: AlarmResolved, request: Request):
         require_device(request, body.device_id)
         return ingest_watchdog(service(), body)
 

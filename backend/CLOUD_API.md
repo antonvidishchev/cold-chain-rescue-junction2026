@@ -93,6 +93,36 @@ Public reads:
 
 Device inventories are independent immutable snapshots with an atomically updated latest pointer. Device catalogue IDs only partly overlap backend IDs, and `{id,quantity}` lacks storage constraints and capacity units. Therefore sync **does not change canonical StockItems, capacity, thresholds, transfers, camera observations or canonical config `stock_present`**. Dashboard code should display snapshot `stock_present` as device-observed only. Empty sync is persisted, not silently ignored. Canonical transfer stock remains unchanged until an explicit validated catalogue/storage/capacity mapping exists. Snapshot, journal and pending notification records survive projector restarts via the durable outbox.
 
+### Smart-fridge and knob events (latest device contract)
+
+The authenticated watchdog envelope also supports:
+
+- POST `/events/fridge-tamper`, event `fridge_tamper`: `sensor_temp_c`,
+  `fridge_display_temp_c`, signed `mismatch_c` (display minus sensor), `fridge_mode`
+  (`normal` or `defrost`), `fridge_power_w`, unique `stocked_items`, and `code:"H1"`.
+  Creates/annotates a TAMPER incident with protocol H1; the report is device testimony,
+  not proof of a cyberattack.
+- POST `/events/alarm-ack`, event `alarm_acknowledged`: nullable `alarm_kind`
+  (`power_outage`, `fridge_tamper`, `unfreeze`), nullable `code` (P1–P4/H1), `doors`,
+  and `acknowledged_by:"knob"`. Acknowledges matching active incidents at that device's
+  location. Door-only gestures may have null kind/code.
+- POST `/events/alarm-resolved`, event `alarm_resolved`: non-null `alarm_kind`, nullable
+  `code`, `acknowledged_at` (Unix seconds or null), and `resolved_by:"knob"`.
+  Records `device_resolved_at/by` on matching incidents and an audit event. **Does not
+  set recovered_at, restore power, certify stock safety, or close measured alarms.**
+  Unfreeze events without a corresponding incident remain visible in event history.
+
+Nested telemetry accepts optional `fridge_display_temp_c`; readings retain it and
+`humidity`. Only fresh telemetry updates the clinic's `reported_temp_c` and
+`reported_temp_at`. Inventory sync accepts an optional unique `transferred` item
+list and preserves it in the device snapshot; it does not perform canonical stock
+transfers or invent a destination. Existing flat telemetry remains supported.
+
+The device's `/camera/fridge_*.jpg` stills are local simulation assets, not uploaded
+camera events. They do not appear in the cloud image API until the device developer
+uploads JPEG bytes through `/telemetry/images`. The public dashboard does not fetch
+local device URLs or fabricate Foundry descriptions.
+
 ### Status
 
 POST `/telemetry/status`:

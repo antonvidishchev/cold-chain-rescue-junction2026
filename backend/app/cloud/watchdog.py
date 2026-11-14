@@ -24,11 +24,13 @@ class InventoryItem(Data):
 
 class InventoryData(Data):
     inventory: list[InventoryItem] = Field(max_length=100)
+    transferred: list[InventoryItem] = Field(default_factory=list, max_length=100)
 
     @model_validator(mode="after")
     def unique_items(self):
         identifiers = [item.id for item in self.inventory]
-        if len(set(identifiers)) != len(identifiers):
+        transferred = [item.id for item in self.transferred]
+        if len(set(identifiers)) != len(identifiers) or len(set(transferred)) != len(transferred):
             raise ValueError("Inventory product IDs must be unique")
         return self
 
@@ -66,7 +68,44 @@ class DoorsData(Data):
 class TelemetryData(Data):
     temp_c: float = Field(ge=-273.15, le=1000)
     humidity: float | None = Field(default=None, ge=0, le=100)
+    fridge_display_temp_c: float | None = Field(default=None, ge=-273.15, le=1000)
     alarm: Annotated[str, Field(max_length=128)] | None = None
+
+
+class TamperData(Data):
+    sensor_temp_c: float = Field(ge=-273.15, le=1000)
+    fridge_display_temp_c: float = Field(ge=-273.15, le=1000)
+    mismatch_c: float = Field(ge=-1273.15, le=1273.15)
+    fridge_mode: Literal["normal", "defrost"]
+    fridge_power_w: float = Field(ge=0, le=100000)
+    stocked_items: list[Identifier] = Field(max_length=100)
+    code: Literal["H1"]
+
+    @model_validator(mode="after")
+    def consistent_mismatch(self):
+        if abs(self.mismatch_c - (self.fridge_display_temp_c - self.sensor_temp_c)) > 0.02:
+            raise ValueError("Mismatch must equal fridge display minus sensor temperature")
+        if len(self.stocked_items) != len(set(self.stocked_items)):
+            raise ValueError("Stocked product IDs must be unique")
+        return self
+
+
+AlarmKind = Literal["power_outage", "fridge_tamper", "unfreeze"]
+AlarmCode = Literal["P1", "P2", "P3", "P4", "H1"]
+
+
+class AlarmAckData(Data):
+    alarm_kind: AlarmKind | None
+    code: AlarmCode | None
+    doors: bool
+    acknowledged_by: Literal["knob"]
+
+
+class AlarmResolvedData(Data):
+    alarm_kind: AlarmKind
+    code: AlarmCode | None
+    acknowledged_at: float | None = Field(ge=0, le=253402300799)
+    resolved_by: Literal["knob"]
 
 
 D = TypeVar("D", bound=Data)
@@ -110,6 +149,18 @@ class Telemetry(Envelope[TelemetryData]):
     event: Literal["telemetry"]
 
 
+class FridgeTamper(Envelope[TamperData]):
+    event: Literal["fridge_tamper"]
+
+
+class AlarmAck(Envelope[AlarmAckData]):
+    event: Literal["alarm_acknowledged"]
+
+
+class AlarmResolved(Envelope[AlarmResolvedData]):
+    event: Literal["alarm_resolved"]
+
+
 def ingest_watchdog(service, body: Envelope) -> dict:
     payload = body.model_dump(mode="json", exclude_unset=True)
     event = payload["event"]
@@ -136,6 +187,11 @@ def ingest_watchdog(service, body: Envelope) -> dict:
         latest = device.get("watchdog_observed_at", {}).get(event)
         if event == "power_outage":
             latest = max(latest or "", device.get("last_status_at") or "", location.get("last_status_at") or "")
+        elif event == "fridge_tamper":
+            latest = max(latest or "", device.get("last_temperature_at") or "")
+        elif event in {"alarm_acknowledged", "alarm_resolved"}:
+            reports = device.get("watchdog_observed_at", {})
+            latest = max(latest or "", reports.get("alarm_acknowledged", ""), reports.get("alarm_resolved", ""))
         stale = bool(latest and body.ts <= latest)
         device["last_seen"] = received
         service._incident(state, location, "OFFLINE", False, "Device heartbeat overdue")
@@ -147,10 +203,32 @@ def ingest_watchdog(service, body: Envelope) -> dict:
                             "clinic_id": location["clinic_id"], "ts": body.ts, "received_at": received,
                             "event_id": event_id, "inventory": data["inventory"],
                             "stock_present": any(item["quantity"] > 0 for item in data["inventory"]),
-                            "canonical_stock_updated": False}
+                            "canonical_stock_updated": False,
+                            "transferred": data.get("transferred", [])}
                 state["device_inventory"][key] = snapshot
                 # Only the pointer is mutable. The snapshot is committed via the outbox.
                 device["inventory_snapshot_id"] = key
+            elif event == "fridge_tamper":
+                service._incident(state, location, "TAMPER", True,
+                                  "H1: device reports fridge display disagrees with independent sensor; inspect the unit", "H1")
+                alert = next(a for a in state["alerts"].values() if a["location_id"] == location["id"]
+                             and a["type"] == "TAMPER" and a.get("recovered_at") is None)
+                alert.update(protocol="H1", device_reported_assessment=data, assessment_source="device_unverified")
+            elif event in {"alarm_acknowledged", "alarm_resolved"}:
+                kind = {"power_outage": "POWER_LOSS", "fridge_tamper": "TAMPER", "unfreeze": "UNFREEZE_CHECK"}.get(data["alarm_kind"])
+                kinds = {kind} if kind else set()
+                if data.get("doors"):
+                    kinds.add("DOORS_OPEN")
+                for alert in state["alerts"].values():
+                    if (alert["location_id"] != location["id"] or alert["type"] not in kinds
+                            or alert.get("recovered_at") is not None or body.ts < alert["created_at"]):
+                        continue
+                    # A knob gesture is operator testimony, not temperature/power recovery evidence.
+                    if event == "alarm_acknowledged":
+                        alert.update(status="acknowledged", acknowledged_by="knob", acknowledged_at=body.ts,
+                                     device_acknowledged_at=body.ts, device_acknowledged_by="knob")
+                    else:
+                        alert.update(device_resolved_at=body.ts, device_resolved_by="knob")
             elif event == "doors_open":
                 service._incident(state, location, "DOORS_OPEN", True, "Device reports doors left open; inspect the unit")
             elif event == "unfreeze_check_required":

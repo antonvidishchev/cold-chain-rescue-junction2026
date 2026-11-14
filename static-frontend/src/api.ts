@@ -2,13 +2,33 @@ export interface Device { id: string; last_seen: string | null; status: string }
 export interface Clinic {
   id: string; clinic_id: string; name: string; city: string; synthetic: boolean;
   last_temp_c: number | null; last_reading_at: string | null; alarm_state: string;
+  reported_temp_c?: number | null; reported_temp_at?: string | null;
   power_on: boolean; effective_range: { min_c: number; max_c: number }; devices: Device[];
   used_units: number; free_units: number;
 }
-export interface Reading { id: number; ts: string; temp_c: number; stale: boolean; alarm_active: boolean }
+export interface Reading { id: number; ts: string; temp_c: number; fridge_display_temp_c?: number | null; humidity?: number | null; stale: boolean; alarm_active: boolean }
+export interface DeviceInventory {
+  device_id: string; location_id: string; ts: string;
+  inventory: { id: string; quantity: number }[];
+  transferred?: { id: string; quantity: number }[];
+  stock_present: boolean; canonical_stock_updated: false;
+}
+export interface WatchdogEvent {
+  id: string | number; device_id?: string; location_id?: string; event?: string; event_type?: string; ts?: string;
+  data?: {
+    sensor_temp_c?: number | null; fridge_display_temp_c?: number | null; mismatch_c?: number | null;
+    fridge_mode?: string; fridge_power_w?: number; stocked_items?: string[];
+    alarm_kind?: string | null; code?: string | number | null; doors?: boolean;
+    acknowledged_by?: string; resolved_by?: string; acknowledged_at?: number | null;
+  };
+  result?: { stale?: boolean };
+}
 export interface Incident {
   id: number; location_id: string; type: string; message: string; status: string;
-  created_at: string; recovered_at: string | null; protocol: number | null;
+  created_at: string; recovered_at: string | null; protocol: number | string | null;
+  device_acknowledged_at?: string | null; device_acknowledged_by?: 'knob';
+  device_resolved_at?: string | null; device_resolved_by?: 'knob';
+  device_reported_protocol?: string | null; assessment_source?: string;
   checklist: { id: string; label: string; done: boolean }[];
 }
 export interface TimelineEvent { id: number; location_id: string; type: string; created_at: string; incident_type?: string; alert_id?: number; by?: string; item_id?: string; done?: boolean; plan_id?: number }
@@ -31,9 +51,17 @@ export const API_BASE = normalizeBase(import.meta.env.VITE_API_URL ?? (import.me
 export const apiUrl = (path: string) => `${API_BASE}/api${path}`;
 export const imageUrl = (id: string) => apiUrl(`/images/${encodeURIComponent(id)}/content`);
 
+class ServiceError extends Error {
+  status: number;
+  constructor(status: number) { super(`Service request failed (${status}). Please try again.`); this.status = status; }
+}
+export async function getDeviceInventory(id: string, signal: AbortSignal): Promise<DeviceInventory | null> {
+  try { return await request<DeviceInventory>(`/devices/${encodeURIComponent(id)}/inventory`, { signal }); }
+  catch (error) { if (error instanceof ServiceError && error.status === 404) return null; throw error; }
+}
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(apiUrl(path), { ...options, credentials: 'omit', cache: 'no-store' });
-  if (!response.ok) throw new Error(`Service request failed (${response.status}). Please try again.`);
+  if (!response.ok) throw new ServiceError(response.status);
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }

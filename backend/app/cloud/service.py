@@ -223,7 +223,7 @@ class CloudService:
         return result
 
     @staticmethod
-    def _incident(state: dict, location: dict, kind: str, active: bool, message: str, protocol: int | None = None):
+    def _incident(state: dict, location: dict, kind: str, active: bool, message: str, protocol: int | str | None = None):
         existing = next((a for a in state["alerts"].values() if a["location_id"] == location["id"]
                          and a["type"] == kind and a.get("recovered_at") is None), None)
         if not active:
@@ -313,6 +313,10 @@ class CloudService:
                     "clinic_id": location["clinic_id"], "ts": stamp(when), "observed_at": stamp(when),
                     "temp_c": payload["temp_c"], "alarm_active": payload.get("alarm_active", False),
                     "seq": payload.get("seq", 0), "event_id": event_id, "received_at": received, "stale": stale}
+                if envelope is not None:
+                    for field in ("humidity", "fridge_display_temp_c"):
+                        if field in envelope["data"]:
+                            reading[field] = envelope["data"][field]
                 state["readings"][str(identifier)] = reading
                 if not stale:
                     device[latest_field] = stamp(when)
@@ -329,6 +333,9 @@ class CloudService:
                     if location.get("last_reading_at") is None or stamp(when) > location["last_reading_at"]:
                         location["last_temp_c"] = payload["temp_c"]
                         location["last_reading_at"] = stamp(when)
+                        if "fridge_display_temp_c" in reading:
+                            location["reported_temp_c"] = reading["fridge_display_temp_c"]
+                            location["reported_temp_at"] = stamp(when)
                     self._evaluate_temperature(state, device, location)
             elif not stale:
                 device[latest_field] = stamp(when)

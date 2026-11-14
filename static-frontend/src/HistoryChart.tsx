@@ -19,6 +19,6 @@ export default function HistoryChart({ readings, clinic }: { readings: Reading[]
       <text x="48" y="200">{dateTime(points[0].ts)}</text><text x="728" y="200" textAnchor="end">{dateTime(points.at(-1)!.ts)}</text>
     </svg>
     <div className="chart-caption"><span><i className="legend-dot teal" />Measured °C</span><span><i className="legend-dot range" />Configured range</span><span>{points.length} observations · last 24h</span></div>
-    <details className="data-table"><summary>View accessible observation table</summary><div className="table-scroll"><table><thead><tr><th>Observation time</th><th>Temperature °C</th><th>Delivery</th></tr></thead><tbody>{points.map(p => <tr key={p.id}><td>{dateTime(p.ts)}</td><td>{p.temp_c}</td><td>{p.stale ? 'Late arrival' : 'Current at receipt'}</td></tr>)}</tbody></table></div></details>
+    <details className="data-table"><summary>View accessible observation table</summary><div className="table-scroll" tabIndex={0} role="region" aria-label="Temperature observations"><table><thead><tr><th scope="col">Observation time</th><th scope="col">Sensor °C</th><th scope="col">Fridge display °C</th><th scope="col">Humidity %</th><th scope="col">Delivery</th></tr></thead><tbody>{points.map(p => <tr key={p.id}><td>{dateTime(p.ts)}</td><td>{p.temp_c}</td><td>{p.fridge_display_temp_c ?? '—'}</td><td>{p.humidity ?? '—'}</td><td>{p.stale ? 'Late arrival' : 'Current at receipt'}</td></tr>)}</tbody></table></div></details>
   </>;
 }

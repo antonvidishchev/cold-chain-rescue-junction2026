@@ -23,6 +23,9 @@ ROUTES = {
     "doors_open": "/api/events/doors-open",
     "inventory_changed": "/api/inventory/sync",
     "telemetry": "/api/telemetry",
+    "fridge_tamper": "/api/events/fridge-tamper",
+    "alarm_acknowledged": "/api/events/alarm-ack",
+    "alarm_resolved": "/api/events/alarm-resolved",
 }
 DATA = {
     "unfreeze_allowed": {},
@@ -33,6 +36,10 @@ DATA = {
     "doors_open": {"duration_s": 15, "stocked": True},
     "inventory_changed": {"inventory": [{"id": "device-product", "quantity": 2}]},
     "telemetry": {"temp_c": 4.5, "humidity": 44.2, "alarm": "unfreeze"},
+    "fridge_tamper": {"sensor_temp_c": 10.0, "fridge_display_temp_c": 4.0, "mismatch_c": -6.0,
+                      "fridge_mode": "defrost", "fridge_power_w": 320.0, "stocked_items": ["device-product"], "code": "H1"},
+    "alarm_acknowledged": {"alarm_kind": "fridge_tamper", "code": "H1", "doors": False, "acknowledged_by": "knob"},
+    "alarm_resolved": {"alarm_kind": "fridge_tamper", "code": "H1", "acknowledged_at": None, "resolved_by": "knob"},
 }
 
 
@@ -336,6 +343,66 @@ def test_actual_stub_and_watchdog_generated_payloads(cloud, monkeypatch):
             assert post(client, "telemetry", payload).status_code == 200
             assert client.get("/api/events?limit=1").json()[0]["data"] == payload["data"]
             seen.add("telemetry")
+        watchdog.handle("reset")
+        watchdog.update_reading(10, 40)
+        watchdog.handle("hack_fridge")
+        outcomes = [watchdog.check_fridge_tamper(), watchdog.knob_turn(5)]
+        watchdog.ack_message_until = 0
+        outcomes.append(watchdog.knob_turn(5))
+        for outcome in outcomes:
+            assert outcome is not None
+            for function, data in outcome.stubs:
+                payload = stub.STUBS[function](data)
+                response = post(client, payload["event"], payload)
+                assert response.status_code == 200, response.text
+                seen.add(payload["event"])
         assert seen == set(ROUTES)
     finally:
         modules.clear()
+
+def test_fridge_display_telemetry_and_stale_reading(cloud):
+    client, _ = cloud
+    body = envelope('telemetry', data={'temp_c': 10.0, 'humidity': 42.0, 'fridge_display_temp_c': 4.0, 'alarm': 'fridge_tamper'})
+    assert post(client, 'telemetry', body).status_code == 200
+    reading = client.get('/api/readings?location_id=fridge-a').json()[-1]
+    assert reading['fridge_display_temp_c'] == 4.0
+    assert reading['humidity'] == 42.0
+    older = envelope('telemetry', ts=stamp(utcnow()-timedelta(minutes=1)), data={'temp_c': 6.0, 'fridge_display_temp_c': 6.3})
+    assert post(client, 'telemetry', older).json()['stale']
+    location = next(x for x in client.get('/api/clinics').json() if x['id']=='fridge-a')
+    assert location['reported_temp_c'] == 4.0
+
+
+def test_knob_completion_is_not_sensor_recovery(cloud):
+    client, _ = cloud
+    assert post(client, 'fridge_tamper').status_code == 200
+    assert post(client, 'alarm_acknowledged').status_code == 200
+    completion = envelope('alarm_resolved')
+    assert post(client, 'alarm_resolved', completion).status_code == 200
+    assert post(client, 'alarm_resolved', completion).json()['duplicate']
+    alert = next(a for a in client.get('/api/alerts').json() if a['type']=='TAMPER')
+    assert alert['protocol'] == 'H1'
+    assert alert['status'] == 'acknowledged'
+    assert alert['device_acknowledged_by'] == 'knob'
+    assert alert['device_resolved_by'] == 'knob'
+    assert alert['recovered_at'] is None
+    assert next(x for x in client.get('/api/clinics').json() if x['id']=='fridge-a')['alarm_state']=='TAMPER'
+
+
+def test_transferred_inventory_remains_device_report(cloud):
+    client, store = cloud
+    before = store.list('StockItems')
+    data={'inventory':[], 'transferred':[{'id':'device-product','quantity':2}]}
+    assert post(client, 'inventory_changed', envelope('inventory_changed',data=data)).status_code==200
+    snapshot=client.get(f'/api/devices/{DEVICE}/inventory').json()
+    assert snapshot['transferred']==data['transferred']
+    assert snapshot['stock_present'] is False
+    assert snapshot['canonical_stock_updated'] is False
+    assert store.list('StockItems')==before
+
+
+def test_inconsistent_tamper_report_rejected(cloud):
+    client, _ = cloud
+    body=envelope('fridge_tamper')
+    body['data']['mismatch_c']=6.0
+    assert post(client,'fridge_tamper',body).status_code==422
