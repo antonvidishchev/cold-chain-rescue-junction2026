@@ -15,9 +15,11 @@ with the Thermo and Buzzer attached; dashboard open on the projector.
    becomes POWER_LOSS. Click *Propose transfer*: the plan shows which items go
    to which location, with capacity before and after.
 5. **Approve.** "A human signs off. The AI never moves medicine on its own."
-6. **The hack.** In the simulator, set the *fridge self-report* to 4.0 °C while
-   the sensor is still warm. A TAMPER alert appears: "Fridge reports 4.0 °C,
-   watchdog measures 12.3 °C."
+6. **The hack.** On the watchdog tab press *Simulate hacked fridge*. The
+   fridge screen keeps showing 4.0 °C while it defrosts, but the Arduino sensor
+   disagrees: the board sirens, the matrix shows `H1` and the dashboard shows
+   the mismatch. Open runbook section H1. (Legacy dashboard alternative: set
+   the *fridge self-report* slider for a TAMPER alert.)
 7. **Close.** "Monitoring is familiar. ColdChain Rescue coordinates the response."
 
 **No board?** Use the simulator's *temperature* slider to post readings.

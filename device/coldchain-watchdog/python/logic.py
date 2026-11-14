@@ -27,7 +27,20 @@ HANDLING_MINUTES = 15
 DOORS_TEXT = "CLOSE THE DOORS"
 UNFREEZE_TEXT = "CHECK"
 
-COMMANDS = ("unfreeze", "power_outage", "doors_open", "empty", "fill", "reset")
+HACK_TEXT = "H1"  # emergency code of the runbook: fridge data mismatch
+HACK_TITLE = "Fridge screen disagrees with the sensor: trust the sensor, isolate the fridge, call IT security"
+
+# Simulated smart fridge (typical cloud-API fields: air temperature, setpoint,
+# door contact, compressor / defrost state, power draw, error code).
+FRIDGE_MODEL = "SmartFridge SF-200 (simulated)"
+FRIDGE_SETPOINT_C = 5.0
+FRIDGE_SENSOR_OFFSET_C = 0.3  # healthy fridge reads close to the Arduino sensor
+FAKE_DISPLAY_TEMP_C = 4.0  # what a hacked fridge screen keeps showing
+TAMPER_TOLERANCE_C = 2.0  # max |Arduino - fridge screen| before the alarm
+FRIDGE_POWER_NORMAL_W = 85.0
+FRIDGE_POWER_DEFROST_W = 320.0
+
+COMMANDS = ("unfreeze", "power_outage", "doors_open", "hack_fridge", "empty", "fill", "reset")
 
 
 @dataclass
@@ -76,6 +89,8 @@ class Watchdog:
         self.humidity: float | None = None
         self.temp_ts: float | None = None
         self.events: deque[dict] = deque(maxlen=50)
+        self.fridge_hacked: bool = False
+        self.tamper_raised: bool = False  # mismatch alarm already raised since last reset
 
     # ----- state -------------------------------------------------------
     @property
@@ -104,6 +119,83 @@ class Watchdog:
     def _log(self, kind: str, message: str) -> None:
         self.events.appendleft({"ts": self.clock(), "kind": kind, "message": message})
 
+    # ----- simulated smart fridge -------------------------------------
+    def fridge_state(self) -> dict:
+        """Data the smart fridge reports over its (simulated) cloud API."""
+        if self.fridge_hacked:
+            # Attacker put the controller into defrost but keeps the screen "healthy".
+            display = FAKE_DISPLAY_TEMP_C
+        elif self.temp_c is not None:
+            display = round(self.temp_c + FRIDGE_SENSOR_OFFSET_C, 1)
+        else:
+            display = FRIDGE_SETPOINT_C
+        return {
+            "online": True,
+            "model": FRIDGE_MODEL,
+            "mode": "defrost" if self.fridge_hacked else "normal",
+            "setpoint_c": FRIDGE_SETPOINT_C,
+            "display_temp_c": display,
+            "door_open": self.doors_open(),
+            "compressor_on": not self.fridge_hacked,
+            "defrost_active": self.fridge_hacked,
+            "power_w": FRIDGE_POWER_DEFROST_W if self.fridge_hacked else FRIDGE_POWER_NORMAL_W,
+            "error_code": None,
+        }
+
+    def fridge_mismatch_c(self) -> float | None:
+        """Fridge screen minus Arduino sensor; None without a sensor reading."""
+        if self.temp_c is None:
+            return None
+        return round(self.fridge_state()["display_temp_c"] - self.temp_c, 2)
+
+    def check_fridge_tamper(self) -> Outcome | None:
+        """Compare the fridge's reported temperature with the Arduino sensor.
+
+        Returns an Outcome the first time the mismatch is seen (until reset).
+        """
+        mismatch = self.fridge_mismatch_c()
+        if mismatch is None or abs(mismatch) <= TAMPER_TOLERANCE_C or not self.stocked:
+            return None
+        if self.tamper_raised:
+            return None
+        self.tamper_raised = True
+
+        fridge = self.fridge_state()
+        msg = (
+            f"Fridge data mismatch: fridge screen shows {fridge['display_temp_c']:.1f} C, "
+            f"Arduino sensor measures {self.temp_c:.1f} C (diff {abs(mismatch):.1f} C). "
+            "Possible hacked fridge: trust the sensor, follow runbook H1."
+        )
+        self._log("fridge_tamper", msg)
+        if not self.alarm or self.alarm["kind"] != "power_outage":
+            self.alarm = {
+                "kind": "fridge_tamper",
+                "severity": "critical",
+                "title": f"FRIDGE DATA MISMATCH - code {HACK_TEXT}",
+                "message": msg,
+                "protocol": HACK_TEXT,
+                "protocol_title": HACK_TITLE,
+                "display_text": HACK_TEXT,
+                "started_at": self.clock(),
+                "deadline": None,
+            }
+        payload = {
+            "sensor_temp_c": self.temp_c,
+            "fridge_display_temp_c": fridge["display_temp_c"],
+            "mismatch_c": mismatch,
+            "fridge_mode": fridge["mode"],
+            "fridge_power_w": fridge["power_w"],
+            "stocked_items": [m["id"] for m in self.stocked_items()],
+            "code": HACK_TEXT,
+        }
+        return Outcome(
+            "fridge_tamper",
+            msg,
+            pattern=PATTERN_URGENT,
+            display=self.idle_display(),
+            stubs=[("report_fridge_tamper", payload)],
+        )
+
     def snapshot(self) -> dict:
         now = self.clock()
         alarm = None
@@ -120,6 +212,8 @@ class Watchdog:
             "alarm": alarm,
             "doors_open": self.doors_open(),
             "doors_seconds_left": max(0, int(self.doors_open_until - now)),
+            "fridge": self.fridge_state(),
+            "fridge_mismatch_c": self.fridge_mismatch_c(),
             "main_site": self.main_site,
             "events": list(self.events),
         }
@@ -244,6 +338,16 @@ class Watchdog:
             stubs=[("report_doors_open", {"duration_s": DOORS_ALARM_SECONDS, "stocked": self.stocked})],
         )
 
+    def _cmd_hack_fridge(self) -> Outcome:
+        """Simulate the 2026 fridge attacks: defrost while the screen reports a normal temperature.
+
+        No beep here: the siren starts when check_fridge_tamper() sees the sensors disagree.
+        """
+        self.fridge_hacked = True
+        msg = "Simulated attack: fridge controller set to defrost, its screen is frozen at a healthy temperature"
+        self._log("hack_fridge", msg)
+        return Outcome("hack_fridge", msg)
+
     def _cmd_empty(self) -> Outcome:
         self.inventory = []
         msg = "Fridge emptied"
@@ -260,6 +364,8 @@ class Watchdog:
     def _cmd_reset(self) -> Outcome:
         self.alarm = None
         self.doors_open_until = 0.0
+        self.fridge_hacked = False
+        self.tamper_raised = False
         msg = "Alarms cleared by operator"
         self._log("reset", msg)
         return Outcome("reset", msg, pattern=PATTERN_STOP, display=("temp", ""))

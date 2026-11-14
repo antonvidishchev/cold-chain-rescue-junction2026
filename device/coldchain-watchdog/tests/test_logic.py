@@ -140,3 +140,62 @@ def test_reset_clears_alarm(wd):
 def test_unknown_command(wd):
     with pytest.raises(ValueError):
         wd.handle("self_destruct")
+
+
+# ----- simulated smart fridge / hacked fridge ---------------------------
+def test_healthy_fridge_mirrors_sensor(wd):
+    wd.update_reading(5.0, 40.0)
+    fridge = wd.fridge_state()
+    assert fridge["mode"] == "normal" and fridge["compressor_on"] and not fridge["defrost_active"]
+    assert fridge["display_temp_c"] == pytest.approx(5.3)
+    assert wd.check_fridge_tamper() is None
+    assert wd.alarm is None
+
+
+def test_hacked_fridge_raises_h1_alarm_once(wd):
+    wd.update_reading(22.0, 40.0)
+    wd.handle("hack_fridge")
+    assert wd.fridge_state()["display_temp_c"] == 4.0
+    assert wd.fridge_state()["defrost_active"] and not wd.fridge_state()["compressor_on"]
+    out = wd.check_fridge_tamper()
+    assert out is not None
+    assert out.pattern == PATTERN_URGENT
+    assert out.display == ("alarm", "H1")
+    assert [name for name, _ in out.stubs] == ["report_fridge_tamper"]
+    assert wd.alarm["kind"] == "fridge_tamper" and wd.alarm["protocol"] == "H1"
+    assert wd.check_fridge_tamper() is None  # raised only once
+    assert wd.snapshot()["fridge_mismatch_c"] == pytest.approx(-18.0)
+
+
+def test_small_mismatch_is_tolerated(wd):
+    wd.update_reading(5.0, 40.0)
+    wd.handle("hack_fridge")  # screen shows 4.0, sensor 5.0: within tolerance
+    assert wd.check_fridge_tamper() is None
+
+
+def test_no_tamper_alarm_without_sensor_or_stock(wd):
+    wd.handle("hack_fridge")
+    assert wd.check_fridge_tamper() is None  # no sensor reading yet
+    wd.update_reading(22.0, 40.0)
+    wd.handle("empty")
+    assert wd.check_fridge_tamper() is None
+
+
+def test_hack_does_not_overwrite_power_outage_alarm(wd):
+    wd.update_reading(22.0, 40.0)
+    wd.handle("power_outage")
+    wd.handle("hack_fridge")
+    out = wd.check_fridge_tamper()
+    assert out is not None and out.pattern == PATTERN_URGENT
+    assert wd.alarm["kind"] == "power_outage"
+
+
+def test_reset_clears_hack(wd):
+    wd.update_reading(22.0, 40.0)
+    wd.handle("hack_fridge")
+    wd.check_fridge_tamper()
+    wd.handle("reset")
+    assert wd.alarm is None and not wd.fridge_hacked
+    assert wd.check_fridge_tamper() is None
+    wd.handle("hack_fridge")
+    assert wd.check_fridge_tamper() is not None  # armed again

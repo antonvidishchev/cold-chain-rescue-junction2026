@@ -22,6 +22,8 @@ export function WatchdogStatus({ state }: { state: BoardState }) {
           hint={alarm ? alarm.kind.replace('_', ' ') : 'all quiet'} tone={alarm ? (alarm.severity === 'critical' ? 'red' : 'amber') : 'green'} />
       </div>
 
+      <SmartFridgePanel state={state} />
+
       {state.doors_open && (
         <div className="overflow-hidden rounded-xl border border-amber-600 bg-amber-950 py-3 text-amber-200">
           <div className="marquee whitespace-nowrap text-2xl font-bold tracking-widest">
@@ -51,6 +53,42 @@ export function WatchdogStatus({ state }: { state: BoardState }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function SmartFridgePanel({ state }: { state: BoardState }) {
+  const { fridge, temp_c: sensor, fridge_mismatch_c: diff } = state
+  const mismatch = diff != null && Math.abs(diff) > 2
+  return (
+    <div className={`rounded-xl border p-4 ${mismatch ? 'border-red-600 bg-red-950/60' : 'border-slate-800 bg-slate-900'}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs uppercase tracking-wider text-slate-400">Smart fridge feed · {fridge.model}</div>
+        <span className={`rounded px-2 py-0.5 text-xs ${fridge.online ? 'bg-emerald-900 text-emerald-300' : 'bg-red-900 text-red-300'}`}>
+          {fridge.online ? 'online' : 'offline'}
+        </span>
+      </div>
+      <div className="mt-3 grid gap-4 sm:grid-cols-3">
+        <div>
+          <div className="text-xs text-slate-500">Fridge screen says</div>
+          <div className="text-2xl font-bold text-slate-100">{fridge.display_temp_c.toFixed(1)} °C</div>
+          <div className="text-xs text-slate-500">setpoint {fridge.setpoint_c.toFixed(1)} °C</div>
+        </div>
+        <div>
+          <div className="text-xs text-slate-500">Arduino sensor measures</div>
+          <div className="text-2xl font-bold text-slate-100">{sensor == null ? '—' : `${sensor.toFixed(1)} °C`}</div>
+          <div className={`text-xs ${mismatch ? 'font-semibold text-red-300' : 'text-slate-500'}`}>
+            {diff == null ? 'no sensor data' : mismatch ? `MISMATCH Δ ${Math.abs(diff).toFixed(1)} °C` : `Δ ${Math.abs(diff).toFixed(1)} °C, consistent`}
+          </div>
+        </div>
+        <dl className="grid grid-cols-2 gap-x-3 text-xs text-slate-400">
+          <dt>Mode</dt><dd className="text-right text-slate-200">{fridge.mode}</dd>
+          <dt>Compressor</dt><dd className="text-right text-slate-200">{fridge.compressor_on ? 'on' : 'off'}</dd>
+          <dt>Defrost</dt><dd className="text-right text-slate-200">{fridge.defrost_active ? 'active' : 'off'}</dd>
+          <dt>Door</dt><dd className="text-right text-slate-200">{fridge.door_open ? 'open' : 'closed'}</dd>
+          <dt>Power</dt><dd className="text-right text-slate-200">{fridge.power_w.toFixed(0)} W</dd>
+        </dl>
+      </div>
     </div>
   )
 }

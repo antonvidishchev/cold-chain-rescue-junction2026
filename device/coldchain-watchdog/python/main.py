@@ -118,8 +118,16 @@ def loop() -> None:
     except queue.Empty:
         pass
 
+    # Smart fridge vs Arduino sensor: raise the H1 alarm when they disagree.
+    with lock:
+        tamper = watchdog.check_fridge_tamper()
+    if tamper is not None:
+        print(f"[fridge] {tamper.message}", flush=True)
+        perform(tamper)
+
     now = time.time()
     with lock:
+        fridge_display = watchdog.fridge_state()["display_temp_c"]
         doors_open = watchdog.doors_open()
         idle = watchdog.idle_display()
         alarm_kind = watchdog.alarm["kind"] if watchdog.alarm else None
@@ -134,7 +142,7 @@ def loop() -> None:
 
     if temp_c is not None and now - loop_state["last_telemetry"] >= TELEMETRY_SECONDS:
         loop_state["last_telemetry"] = now
-        backend_stub.send_telemetry({"temp_c": temp_c, "humidity": humidity, "alarm": alarm_kind})
+        backend_stub.send_telemetry({"temp_c": temp_c, "humidity": humidity, "fridge_display_temp_c": fridge_display, "alarm": alarm_kind})
 
 
 print(f"ColdChain Watchdog {backend_stub.DEVICE_ID}: API on :7000, backend stub enabled={backend_stub.BACKEND_ENABLED}", flush=True)

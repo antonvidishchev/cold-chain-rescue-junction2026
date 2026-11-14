@@ -66,6 +66,11 @@ def report_doors_open(data: dict[str, Any]) -> dict[str, Any]:
     return _send("/api/events/doors-open", "doors_open", data)
 
 
+def report_fridge_tamper(data: dict[str, Any]) -> dict[str, Any]:
+    """Smart fridge reports a temperature that disagrees with the Arduino sensor."""
+    return _send("/api/events/fridge-tamper", "fridge_tamper", data)
+
+
 def sync_inventory(data: dict[str, Any]) -> dict[str, Any]:
     """Fridge inventory changed (emptied or filled)."""
     return _send("/api/inventory/sync", "inventory_changed", data)
@@ -81,6 +86,7 @@ STUBS = {
     "notify_operator_unfreeze_check": notify_operator_unfreeze_check,
     "report_power_outage": report_power_outage,
     "report_doors_open": report_doors_open,
+    "report_fridge_tamper": report_fridge_tamper,
     "sync_inventory": sync_inventory,
     "send_telemetry": send_telemetry,
 }

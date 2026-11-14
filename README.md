@@ -221,6 +221,7 @@ curl -X POST http://<board-ip>:7000/api/command/power_outage
 | `unfreeze` (suspicious unfreeze) | Blocked: two groups of three beeps, matrix shows a warning sign and `CHECK`, operator notification stub | Allowed, only logged |
 | `power_outage` | Two-tone siren for 10 s, then a chirp every 5 s; matrix shows a warning sign and the protocol (`P1`…`P4`); dashboard shows the safe window countdown and clinics to call | Nothing to do |
 | `doors_open` | `CLOSE THE DOORS` marquee and seatbelt-style chime for 15 s | same |
+| `hack_fridge` (simulate hacked fridge) | The simulated smart fridge goes into defrost but its screen stays at 4.0 °C. The board compares the fridge feed with the Arduino sensor; when they differ by more than 2 °C: siren, matrix shows a warning sign and `H1`, dashboard shows the mismatch (runbook **H1**) | No alarm (nothing at risk) |
 | `empty` / `fill` | Empty the fridge or restore the full inventory | same |
 | `reset` | Operator clears alarms, buzzer stops, matrix shows the temperature | same |
 
@@ -232,7 +233,16 @@ Other read-only endpoints: `GET /api/state`, `GET /api/inventory`,
 `GET /api/clinics`.
 
 The sensor is not inside a real fridge, so the room temperature it measures
-is shown and reported, but it does not trigger alarms.
+is shown and reported, but it does not trigger alarms on its own.
+
+**Smart fridge feed (simulated).** The board also simulates a connected
+fridge, with the fields typical smart fridges and commercial refrigeration
+monitors expose: screen temperature, setpoint, door, compressor, defrost,
+power draw and online status (`fridge` in `GET /api/state`). While healthy
+the fridge screen follows the Arduino sensor. After `hack_fridge` it keeps
+showing 4.0 °C while the controller defrosts (as in the 2026 supermarket
+fridge attacks); the Arduino sensor keeps telling the truth, and the mismatch
+triggers the **H1** alarm. `reset` restores the healthy fridge.
 
 ### Unit tests
 

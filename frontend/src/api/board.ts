@@ -5,7 +5,7 @@ export const BOARD_URL = ((import.meta.env.VITE_BOARD_URL as string | undefined)
   '',
 )
 
-export type BoardCommand = 'unfreeze' | 'power_outage' | 'doors_open' | 'empty' | 'fill' | 'reset'
+export type BoardCommand = 'unfreeze' | 'power_outage' | 'doors_open' | 'hack_fridge' | 'empty' | 'fill' | 'reset'
 
 export interface Medicine {
   id: string
@@ -57,12 +57,26 @@ export interface Assessment {
   reachable_count: number
 }
 
-export interface BoardAlarm extends Partial<Omit<Assessment, 'protocol'>> {
-  kind: 'unfreeze' | 'power_outage'
+export interface SmartFridge {
+  online: boolean
+  model: string
+  mode: 'normal' | 'defrost'
+  setpoint_c: number
+  display_temp_c: number
+  door_open: boolean
+  compressor_on: boolean
+  defrost_active: boolean
+  power_w: number
+  error_code: string | null
+}
+
+export interface BoardAlarm extends Partial<Omit<Assessment, 'protocol' | 'protocol_title'>> {
+  kind: 'unfreeze' | 'power_outage' | 'fridge_tamper'
   severity: 'warning' | 'critical'
   title: string
   message: string
-  protocol: Assessment['protocol'] | null
+  protocol: Assessment['protocol'] | 'H1' | null
+  protocol_title?: string
   started_at: number
   deadline: number | null
   seconds_left?: number
@@ -83,6 +97,8 @@ export interface BoardState {
   alarm: BoardAlarm | null
   doors_open: boolean
   doors_seconds_left: number
+  fridge: SmartFridge
+  fridge_mismatch_c: number | null
   main_site: Site
   events: BoardEvent[]
 }

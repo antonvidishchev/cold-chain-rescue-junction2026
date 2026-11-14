@@ -4,6 +4,7 @@ const COMMANDS: { name: BoardCommand; label: string; hint: string; style: string
   { name: 'unfreeze', label: '❄ Suspicious unfreeze', hint: 'Fridge receives a defrost command', style: 'bg-sky-800 hover:bg-sky-700' },
   { name: 'power_outage', label: '⚡ Power outage', hint: 'Mains power lost', style: 'bg-red-800 hover:bg-red-700' },
   { name: 'doors_open', label: '🚪 Doors left open', hint: '15 s marquee + chime', style: 'bg-amber-700 hover:bg-amber-600' },
+  { name: 'hack_fridge', label: '☠ Simulate hacked fridge', hint: 'Screen lies: 4 °C while defrosting', style: 'bg-purple-800 hover:bg-purple-700' },
   { name: 'empty', label: '📤 Empty the fridge', hint: 'Remove all medicines', style: 'bg-slate-700 hover:bg-slate-600' },
   { name: 'fill', label: '📥 Fill the fridge', hint: 'Restore full inventory', style: 'bg-slate-700 hover:bg-slate-600' },
 ]
