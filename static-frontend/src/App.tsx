@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { connectivity, dateTime, getList, imageUrl, measurement, observationStale, temperature, words, type Clinic, type ImageRecord, type Incident, type Reading, type TimelineEvent, type Transfer } from './api';
 import { usePoll } from './usePoll';
 import ClinicMap from './ClinicMap';
@@ -20,7 +20,7 @@ function IncidentCard({ incident, timeline }: { incident: Incident; timeline: Ti
 }
 function ClinicDetail({ clinic, incidents, transfers }: { clinic: Clinic; incidents: Incident[]; transfers: Transfer[] }) {
   const history = usePoll(`history:${clinic.id}`, signal => getList<Reading>(`/readings?location_id=${encodeURIComponent(clinic.id)}&limit=300`, signal));
-  const timeline = usePoll(`timeline:${clinic.id}`, signal => getList<TimelineEvent>(`/timeline?location_id=${encodeURIComponent(clinic.id)}&limit=100`, signal));
+  const timeline = usePoll(`timeline:${clinic.id}`, signal => getList<TimelineEvent>(`/timeline?location_id=${encodeURIComponent(clinic.id)}&limit=100`, signal), 5_000);
   const deviceKey = clinic.devices.map(device => device.id).sort().join(',');
   const photos = usePoll(`images:${clinic.id}:${deviceKey}`, async signal => (await Promise.all(clinic.devices.map(device => getList<ImageRecord>(`/images?device_id=${encodeURIComponent(device.id)}`, signal)))).flat().filter(image => image.synthetic === true).sort((a, b) => b.observed_at.localeCompare(a.observed_at)));
   const localIncidents = incidents.filter(row => row.location_id === clinic.id);
@@ -31,11 +31,16 @@ function ClinicDetail({ clinic, incidents, transfers }: { clinic: Clinic; incide
 }
 export default function App() {
   const [selection, setSelection] = useState(() => new URLSearchParams(window.location.search).get('clinic') || '');
+  // Clinics and alerts drive the alarm dot and incident count, so they poll fast
+  // (a knob resolve shows within ~2 s); transfers change rarely and refresh slowly.
+  const transfersCache = useRef<{ at: number; rows: Transfer[] }>({ at: 0, rows: [] });
   const network = usePoll('network', async signal => {
-    const [clinics, incidents, transfers] = await Promise.all([getList<Clinic>('/clinics', signal), getList<Incident>('/alerts', signal), getList<Transfer>('/transfers', signal)]);
+    const stale = Date.now() - transfersCache.current.at > 20_000;
+    const [clinics, incidents, transfers] = await Promise.all([getList<Clinic>('/clinics', signal), getList<Incident>('/alerts', signal), stale ? getList<Transfer>('/transfers', signal) : Promise.resolve(transfersCache.current.rows)]);
+    if (stale) transfersCache.current = { at: Date.now(), rows: transfers };
     const cityOrder = ['helsinki', 'espoo', 'tampere', 'vantaa', 'oulu'];
     return { clinics: clinics.filter(clinic => clinic.synthetic === true).sort((a, b) => cityOrder.indexOf(a.clinic_id) - cityOrder.indexOf(b.clinic_id)), incidents, transfers };
-  });
+  }, 2_000);
   const clinics = network.data?.clinics || [];
   const selected = clinics.find(clinic => clinic.id === selection) || clinics[0];
   const active = network.data?.incidents.filter(row => !row.recovered_at && row.status !== 'resolved') || [];

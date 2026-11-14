@@ -38,7 +38,7 @@ function EventDetail({ event }: { event: WatchdogEvent }) {
 }
 
 export function WatchdogEvents({ clinic }: { clinic: Clinic }) {
-  const events = usePoll(`events:${clinic.id}`, signal => getList<WatchdogEvent>(`/events?location_id=${encodeURIComponent(clinic.id)}&limit=50`, signal));
+  const events = usePoll(`events:${clinic.id}`, signal => getList<WatchdogEvent>(`/events?location_id=${encodeURIComponent(clinic.id)}&limit=50`, signal), 5_000);
   return <section className="panel watchdog-panel" aria-labelledby="watchdog-heading">
     <div className="section-top"><h2 id="watchdog-heading">Device event reports</h2><span className="badge neutral">READ ONLY</span></div>
     <p className="muted">Latest 50 clinic events. Device reports are not independent recovery or clinical evidence. Late reports do not update current state.</p>

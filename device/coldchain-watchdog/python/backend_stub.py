@@ -55,6 +55,9 @@ DEVICE_ID = os.environ.get("COLDCHAIN_DEVICE_ID", "unoq-fridge-a")
 BACKEND_ENABLED = os.environ.get("BACKEND_ENABLED", "0") == "1"
 # An Azure Functions cold start can take well over the old 2 s.
 HTTP_TIMEOUT = 20.0
+# Alarm events (ack/resolve) are what the operator is waiting to see, so a hung
+# connection is cut off sooner and retried instead of holding the event for 20 s.
+EVENT_HTTP_TIMEOUT = 8.0
 # Alarm events are retried; telemetry is periodic, so a failed reading is simply
 # replaced by the next one instead of being retried.
 EVENT_ATTEMPTS = 4
@@ -78,7 +81,7 @@ _optional_telemetry_fields = {"fridge_display_temp_c"}
 _dropped_fields: set[str] = set()
 
 
-def _post(path: str, payload: dict[str, Any]) -> tuple[int | None, str]:
+def _post(path: str, payload: dict[str, Any], timeout: float = HTTP_TIMEOUT) -> tuple[int | None, str]:
     req = urllib.request.Request(
         f"{API_URL}{path}",
         data=json.dumps(payload).encode(),
@@ -86,7 +89,7 @@ def _post(path: str, payload: dict[str, Any]) -> tuple[int | None, str]:
         headers=auth_headers(),
     )
     try:
-        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, resp.read(300).decode(errors="replace")
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read(300).decode(errors="replace")
@@ -95,15 +98,16 @@ def _post(path: str, payload: dict[str, Any]) -> tuple[int | None, str]:
 
 
 def _backoff(attempt: int) -> float:
-    return min(30.0, 2.0**attempt) + random.random()
+    # First retry after ~0.5 s so one transient failure barely delays an alarm event.
+    return min(30.0, 0.5 * 2.0 ** (attempt - 1)) + random.random() * 0.5
 
 
-def _deliver(path: str, payload: dict[str, Any], max_attempts: int) -> bool:
+def _deliver(path: str, payload: dict[str, Any], max_attempts: int, timeout: float = HTTP_TIMEOUT) -> bool:
     """POST with retries; the same event_id/ts/payload is reused so retries are idempotent."""
     attempt, status, body = 0, None, ""
     while attempt < max_attempts:
         attempt += 1
-        status, body = _post(path, payload)
+        status, body = _post(path, payload, timeout)
         if status is not None and 200 <= status < 300:
             print(f"[backend] {path} -> {status} {body}", flush=True)
             return True
@@ -146,23 +150,29 @@ class Outbox:
                 self.dropped += 1
                 print(f"[backend] outbox full, dropped oldest {old_path}", flush=True)
             self._events.append((path, payload))
-            self._cond.notify()
+            self._cond.notify_all()
 
     def put_telemetry(self, path: str, payload: dict[str, Any]) -> None:
         with self._cond:
             if self._telemetry is not None:
                 self.dropped += 1  # superseded by a newer reading
             self._telemetry = (path, payload)
-            self._cond.notify()
+            self._cond.notify_all()
 
-    def get(self, timeout: float | None = None) -> tuple[str, dict[str, Any], int] | None:
-        """Next item and its attempt budget: events first, then the latest reading."""
+    def get(self, kind: str = "event", timeout: float | None = None) -> tuple[str, dict[str, Any], int] | None:
+        """Next item of ``kind`` ("event" or "telemetry") and its attempt budget.
+
+        Events and telemetry have separate consumers, so a slow telemetry POST
+        can never hold up an alarm event.
+        """
         with self._cond:
-            if not self._cond.wait_for(lambda: self._events or self._telemetry, timeout):
-                return None
-            if self._events:
+            if kind == "event":
+                if not self._cond.wait_for(lambda: self._events, timeout):
+                    return None
                 path, payload = self._events.popleft()
                 return path, payload, EVENT_ATTEMPTS
+            if not self._cond.wait_for(lambda: self._telemetry, timeout):
+                return None
             path, payload = self._telemetry
             self._telemetry = None
             return path, payload, 1
@@ -175,19 +185,21 @@ class Outbox:
 _outbox = Outbox()
 
 
-def _worker() -> None:
+def _worker(kind: str) -> None:
+    timeout = EVENT_HTTP_TIMEOUT if kind == "event" else HTTP_TIMEOUT
     while True:
         try:
-            item = _outbox.get()
+            item = _outbox.get(kind)
             if item is not None:
-                _deliver(*item)
-        except Exception as exc:  # never let the sender thread die
+                _deliver(*item, timeout)
+        except Exception as exc:  # never let a sender thread die
             print(f"[backend] sender error: {type(exc).__name__}: {exc}", flush=True)
             time.sleep(1.0)
 
 
 if BACKEND_ENABLED:
-    threading.Thread(target=_worker, name="backend-sender", daemon=True).start()
+    threading.Thread(target=_worker, args=("event",), name="backend-events", daemon=True).start()
+    threading.Thread(target=_worker, args=("telemetry",), name="backend-telemetry", daemon=True).start()
 
 
 def _send(path: str, event: str, data: dict[str, Any]) -> dict[str, Any]:
