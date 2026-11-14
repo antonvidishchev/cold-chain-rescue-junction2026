@@ -29,7 +29,7 @@ local.settings.json
 .python_packages/
 
 # Private deployment state, parameters and device handoff
-/infra/
+/infra/scripts/
 .copilot-azure/
 .azure-private/
 /arduino-developer.md

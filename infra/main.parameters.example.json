@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": { "value": "demo" },
+    "location": { "value": "swedencentral" },
+    "resourceGroupName": { "value": "" },
+    "sessionId": { "value": "" },
+    "deployedBy": { "value": "" },
+    "createdAt": { "value": "" },
+    "resourceNames": {
+      "value": {
+        "functionApp": "",
+        "functionPlan": "",
+        "hostStorageAccount": "",
+        "appStorageAccount": "",
+        "keyVault": "",
+        "logAnalyticsWorkspace": "",
+        "appInsights": "",
+        "staticWebApp": "",
+        "userAssignedIdentity": ""
+      }
+    },
+    "foundrySubscriptionId": { "value": "" },
+    "foundryResourceGroupName": { "value": "" },
+    "foundryAccountName": { "value": "" },
+    "foundryDeploymentName": { "value": "" },
+    "foundryEndpoint": { "value": "" },
+    "corsOrigins": { "value": [] },
+    "staticWebAppApiBaseUrl": { "value": "" },
+    "deployerObjectId": { "value": "" },
+    "imageContainerName": { "value": "images" },
+    "imageQueueName": { "value": "image-analysis" },
+    "maxImageBytes": { "value": 5242880 },
+    "appSecretValues": {
+      "value": {
+        "COLDCHAIN_DEVICE_KEYS": "",
+        "COLDCHAIN_DEVICE_FUNCTION_KEY": "",
+        "COLDCHAIN_OPERATOR_KEY": "",
+        "VAPID_PRIVATE_KEY": "",
+        "VAPID_PUBLIC_KEY": "",
+        "VAPID_SUBJECT": ""
+      }
+    }
+  }
+}
