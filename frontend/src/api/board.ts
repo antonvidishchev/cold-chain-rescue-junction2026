@@ -84,6 +84,12 @@ export interface BoardAlarm extends Partial<Omit<Assessment, 'protocol' | 'proto
   acknowledged_by?: string
 }
 
+export interface CameraFrame {
+  frame: 'fridge_normal' | 'fridge_door_open' | 'fridge_heating' | 'fridge_power_outage'
+  url: string
+  simulated: boolean
+}
+
 export interface BoardEvent {
   ts: number
   kind: string
@@ -101,6 +107,7 @@ export interface BoardState {
   doors_seconds_left: number
   fridge: SmartFridge
   fridge_mismatch_c: number | null
+  camera: CameraFrame
   main_site: Site
   events: BoardEvent[]
 }

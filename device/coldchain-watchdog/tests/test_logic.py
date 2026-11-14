@@ -326,3 +326,61 @@ def test_reset_after_ack(wd, clock):
     turn(wd, clock, KNOB_ACK_STEPS)
     wd.handle("reset")
     assert wd.alarm is None and not wd.ack_message_active() and wd.knob_steps == 0
+
+
+# ----- simulated camera -----------------------------------------------------
+def frame(wd):
+    return wd.snapshot()["camera"]["frame"]
+
+
+def test_camera_normal_by_default(wd):
+    cam = wd.snapshot()["camera"]
+    assert cam == {"frame": "fridge_normal", "url": "/camera/fridge_normal.jpg", "simulated": True}
+
+
+def test_camera_door_open_for_the_doors_warning(wd, clock):
+    wd.handle("doors_open")
+    assert frame(wd) == "fridge_door_open"
+    clock.t += DOORS_ALARM_SECONDS + 1
+    assert frame(wd) == "fridge_normal"
+
+
+def test_camera_power_outage_outranks_doors(wd):
+    wd.handle("doors_open")
+    wd.handle("power_outage")
+    assert frame(wd) == "fridge_power_outage"
+
+
+def test_camera_power_outage_with_empty_fridge_stays_normal(wd):
+    wd.handle("empty")
+    wd.handle("power_outage")
+    assert frame(wd) == "fridge_normal"
+
+
+def test_camera_heating_for_unfreeze_alarm(wd):
+    wd.handle("unfreeze")
+    assert frame(wd) == "fridge_heating"
+
+
+def test_camera_hacked_fridge_looks_normal(wd):
+    wd.update_reading(12.0, 40)
+    wd.handle("hack_fridge")
+    assert wd.check_fridge_tamper() is not None
+    assert frame(wd) == "fridge_normal"
+
+
+def test_camera_keeps_alarm_frame_until_resolved(wd, clock):
+    wd.handle("power_outage")
+    turn(wd, clock, KNOB_ACK_STEPS)
+    assert wd.alarm_acknowledged()
+    assert frame(wd) == "fridge_power_outage"
+    clock.t += 6
+    turn(wd, clock, KNOB_ACK_STEPS)
+    assert wd.alarm is None
+    assert frame(wd) == "fridge_normal"
+
+
+def test_camera_reset_returns_to_normal(wd):
+    wd.handle("unfreeze")
+    wd.handle("reset")
+    assert frame(wd) == "fridge_normal"

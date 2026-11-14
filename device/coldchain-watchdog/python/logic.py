@@ -48,6 +48,12 @@ TAMPER_TOLERANCE_C = 2.0  # max |Arduino - fridge screen| before the alarm
 FRIDGE_POWER_NORMAL_W = 85.0
 FRIDGE_POWER_DEFROST_W = 320.0
 
+# Simulated fridge camera: stills served from assets/camera/<frame>.jpg.
+CAMERA_NORMAL = "fridge_normal"
+CAMERA_DOOR_OPEN = "fridge_door_open"
+CAMERA_HEATING = "fridge_heating"
+CAMERA_POWER_OUTAGE = "fridge_power_outage"
+
 COMMANDS = ("unfreeze", "power_outage", "doors_open", "hack_fridge", "empty", "fill", "reset")
 
 
@@ -213,8 +219,24 @@ class Watchdog:
             stubs=[("report_fridge_tamper", payload)],
         )
 
+    def camera_frame(self) -> str:
+        """Which simulated camera still matches the current state.
+
+        A hacked fridge looks normal on camera too: its screen shows a healthy
+        temperature, only the Arduino sensor reveals the problem.
+        """
+        kind = self.alarm["kind"] if self.alarm else None
+        if kind == "power_outage":
+            return CAMERA_POWER_OUTAGE
+        if self.doors_open():
+            return CAMERA_DOOR_OPEN
+        if kind == "unfreeze":
+            return CAMERA_HEATING
+        return CAMERA_NORMAL
+
     def snapshot(self) -> dict:
         now = self.clock()
+        frame = self.camera_frame()
         alarm = None
         if self.alarm:
             alarm = dict(self.alarm)
@@ -231,6 +253,7 @@ class Watchdog:
             "doors_seconds_left": max(0, int(self.doors_open_until - now)),
             "fridge": self.fridge_state(),
             "fridge_mismatch_c": self.fridge_mismatch_c(),
+            "camera": {"frame": frame, "url": f"/camera/{frame}.jpg", "simulated": True},
             "main_site": self.main_site,
             "events": list(self.events),
         }

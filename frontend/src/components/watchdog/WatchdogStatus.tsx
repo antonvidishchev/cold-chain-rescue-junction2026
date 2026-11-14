@@ -1,4 +1,15 @@
-import type { BoardState } from '../../api/board'
+import { useEffect, useState } from 'react'
+import { BOARD_URL } from '../../api/board'
+import type { BoardState, CameraFrame } from '../../api/board'
+
+const CAMERA_LABELS: Record<CameraFrame['frame'], string> = {
+  fridge_normal: 'Normal',
+  fridge_door_open: 'Door open',
+  fridge_heating: 'Warming',
+  fridge_power_outage: 'Power out',
+}
+
+const ALL_FRAMES = Object.keys(CAMERA_LABELS) as CameraFrame['frame'][]
 
 function formatCountdown(seconds: number) {
   const h = Math.floor(seconds / 3600)
@@ -25,6 +36,8 @@ export function WatchdogStatus({ state }: { state: BoardState }) {
       </div>
 
       <SmartFridgePanel state={state} />
+
+      <CameraPanel state={state} tone={alarmTone} />
 
       {state.doors_open && (
         <div className="overflow-hidden rounded-xl border border-amber-600 bg-amber-950 py-3 text-amber-200">
@@ -103,6 +116,44 @@ function SmartFridgePanel({ state }: { state: BoardState }) {
           <dt>Door</dt><dd className="text-right text-slate-200">{fridge.door_open ? 'open' : 'closed'}</dd>
           <dt>Power</dt><dd className="text-right text-slate-200">{fridge.power_w.toFixed(0)} W</dd>
         </dl>
+      </div>
+    </div>
+  )
+}
+
+function CameraPanel({ state, tone }: { state: BoardState; tone: 'green' | 'amber' | 'red' }) {
+  const { camera } = state
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  if (!camera) return null
+  const border = { green: 'border-slate-800', amber: 'border-amber-600', red: 'border-red-600' }[tone]
+  return (
+    <div className={`rounded-xl border bg-slate-900 p-4 ${border}`}>
+      <div className="mb-3 flex items-center justify-between">
+        <div className="text-xs uppercase tracking-wider text-slate-400">Fridge camera{camera.simulated ? ' · simulated' : ''}</div>
+        <span className="flex items-center gap-1 text-xs font-semibold text-red-400">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" /> LIVE
+        </span>
+      </div>
+      <div className="relative aspect-video overflow-hidden rounded-lg bg-black">
+        {/* All stills stay mounted so switching frames cross-fades without a reload flash. */}
+        {ALL_FRAMES.map((f) => (
+          <img
+            key={f}
+            src={`${BOARD_URL}/camera/${f}.jpg`}
+            alt={`Fridge camera: ${CAMERA_LABELS[f]}`}
+            className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-500 ${f === camera.frame ? 'opacity-100' : 'opacity-0'}`}
+          />
+        ))}
+        <div className="absolute left-2 top-2 rounded bg-black/60 px-2 py-0.5 font-mono text-xs text-slate-200">
+          CAM-01 · {now.toLocaleTimeString()}
+        </div>
+        <div className="absolute bottom-2 right-2 rounded bg-black/60 px-2 py-0.5 text-xs font-semibold text-slate-100">
+          {CAMERA_LABELS[camera.frame] ?? camera.frame}
+        </div>
       </div>
     </div>
   )
