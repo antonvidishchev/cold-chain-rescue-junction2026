@@ -7,6 +7,16 @@ dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.30",
   "sqlmodel>=0.0.22",
+  "azure-functions>=1.21,<2; python_version < '3.13'",
+  "azure-functions>=2,<3; python_version >= '3.13'",
+  "azure-data-tables>=12.6,<13",
+  "azure-storage-blob>=12.24,<13",
+  "azure-storage-queue>=12.12,<13",
+  "azure-identity>=1.19,<2",
+  "openai>=1.75,<3",
+  "python-multipart>=0.0.20,<1",
+  "pillow>=11,<13",
+  "pywebpush>=2,<3",
 ]
 
 [dependency-groups]
