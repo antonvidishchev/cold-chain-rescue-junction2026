@@ -31,8 +31,15 @@ export default function ClinicMap({ clinics, selected, onSelect }: { clinics: Cl
     if (positions.length && fitted.current !== boundsKey) {
       const focus = clinics.find(clinic => clinic.monitored !== false && clinic.alarm_state !== 'NORMAL' && clinic.alarm_state !== 'OFFLINE' && clinicPosition(clinic))
         || clinics.find(clinic => clinic.monitored === true && clinicPosition(clinic));
-      if (focus) map.current?.setView(clinicPosition(focus)!, 10);
-      else map.current?.fitBounds(positions, { padding: [40, 40], maxZoom: 13 });
+      const center = focus ? clinicPosition(focus)! : positions[0];
+      const radians = Math.PI / 180;
+      const distance = ([lat, lon]: [number, number]) => {
+        const latitude = Math.sin((lat - center[0]) * radians / 2);
+        const longitude = Math.sin((lon - center[1]) * radians / 2);
+        return latitude * latitude + Math.cos(center[0] * radians) * Math.cos(lat * radians) * longitude * longitude;
+      };
+      const nearby = [...positions].sort((a, b) => distance(a) - distance(b)).slice(0, 5);
+      map.current?.fitBounds(nearby, { padding: [40, 40], maxZoom: 13 });
       fitted.current = boundsKey;
     }
     layer.current?.clearLayers();
@@ -41,7 +48,7 @@ export default function ClinicMap({ clinics, selected, onSelect }: { clinics: Cl
       if (!position || !layer.current) return;
       const monitored = clinic.monitored !== false;
       const alarm = monitored && clinic.alarm_state !== 'NORMAL' && clinic.alarm_state !== 'OFFLINE';
-      const label = monitored ? `${clinic.name}: ${temperature(clinic.last_temp_c)} Celsius, ${measurement(clinic)}, ${connectivity(clinic)}` : `${clinic.name}: Not monitored / demo capacity`;
+      const label = monitored ? `${clinic.name}: ${temperature(clinic.last_temp_c)} Celsius, ${measurement(clinic)}, ${connectivity(clinic)}` : `${clinic.name}: Not monitored / estimated capacity`;
       const icon = L.divIcon({ className: '', html: `<span class="map-pin ${!monitored ? 'destination' : ''} ${alarm ? 'alarm' : ''} ${selected === clinic.id ? 'selected' : ''}"><span></span></span>`, iconSize: [28, 28], iconAnchor: [14, 14] });
       const marker = L.marker(position, { icon, title: label, alt: label, keyboard: true }).addTo(layer.current);
       const text = document.createElement('span'); text.textContent = clinic.name;

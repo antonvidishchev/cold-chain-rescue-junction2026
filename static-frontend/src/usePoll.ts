@@ -17,7 +17,7 @@ export function usePoll<T>(key: string, load: (signal: AbortSignal) => Promise<T
       } catch (error) {
         if (active) setState(previous => ({ ...(previous.key === key ? previous : { key }), loading: false, error: error instanceof Error ? error.message : 'Unable to reach the service.' }));
       } finally {
-        if (active) timer = setTimeout(run, 20_000);
+        if (active) timer = setTimeout(run, 5_000);
       }
     }
     void run();

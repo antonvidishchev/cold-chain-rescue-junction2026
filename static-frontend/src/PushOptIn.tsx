@@ -37,7 +37,7 @@ export default function PushOptIn() {
         await request(`/push/subscriptions/${encodeURIComponent(next.id)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${next.token}` } });
         throw new Error('Browser storage is unavailable; subscription was not saved.');
       }
-      setRecord(next); setMessage('Enabled for all demo locations on this browser. Delivery is best effort.');
+      setRecord(next); setMessage('Enabled for all locations on this browser. Delivery is best effort.');
     } catch (error) {
       if (created && subscription) await subscription.unsubscribe().catch(() => false);
       setMessage(error instanceof Error ? error.message : 'Could not enable notifications.');
@@ -54,5 +54,5 @@ export default function PushOptIn() {
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Could not remove subscription. Please retry.'); }
     finally { setBusy(false); }
   }
-  return <section className="push-panel" aria-labelledby="push-heading"><div><span className="eyebrow">STAY INFORMED</span><h3 id="push-heading">A heads-up, not an alarm system.</h3><p>Optional browser notifications for this public demo. No patient data. Not for emergency or clinical use.</p></div><div className="push-actions">{!supported ? <span>Push unavailable. Use a supported browser on HTTPS or localhost.</span> : <><button className="button dark" onClick={enable} disabled={busy || permission === 'denied'}>{busy ? 'Please wait…' : record ? 'Renew notifications' : 'Enable notifications'}</button>{record && <button className="button" onClick={disable} disabled={busy}>Disable notifications</button>}{permission === 'denied' && <p>Notifications blocked in browser settings.</p>}</>}<p role="status">{message}</p></div></section>;
+  return <section className="push-panel" aria-labelledby="push-heading"><div><span className="eyebrow">STAY INFORMED</span><h3 id="push-heading">A heads-up, not an alarm system.</h3><p>Optional browser notifications for this public scenario. No patient data. Not for emergency or clinical use.</p></div><div className="push-actions">{!supported ? <span>Push unavailable. Use a supported browser on HTTPS or localhost.</span> : <><button className="button dark" onClick={enable} disabled={busy || permission === 'denied'}>{busy ? 'Please wait…' : record ? 'Renew notifications' : 'Enable notifications'}</button>{record && <button className="button" onClick={disable} disabled={busy}>Disable notifications</button>}{permission === 'denied' && <p>Notifications blocked in browser settings.</p>}</>}<p role="status">{message}</p></div></section>;
 }

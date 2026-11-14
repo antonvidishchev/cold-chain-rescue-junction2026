@@ -19,15 +19,17 @@ describe('backend location map', () => {
     const select = vi.fn();
     const { rerender } = render(<ClinicMap clinics={catalogueClinics} selected="fridge-a" onSelect={select} />);
     expect(leaflet.marker).toHaveBeenCalledTimes(11);
-    expect(leaflet.instance.setView).toHaveBeenCalledWith([catalogueClinics[0].lat, catalogueClinics[0].lon], 10);
+    expect(leaflet.instance.fitBounds).toHaveBeenCalledWith(
+      expect.arrayContaining(catalogueClinics.slice(0, 5).map(site => [site.lat, site.lon])), expect.anything());
+    expect(leaflet.instance.fitBounds.mock.calls[0][0]).toHaveLength(5);
     for (const site of catalogueClinics) expect(leaflet.marker).toHaveBeenCalledWith([site.lat, site.lon], expect.objectContaining({ title: expect.stringContaining(site.name) }));
     expect(leaflet.divIcon.mock.calls.filter(([options]) => options.html.includes('destination'))).toHaveLength(10);
-    for (const call of leaflet.marker.mock.calls.slice(1)) expect((call as unknown as [unknown, { title: string }])[1].title).toContain('Not monitored / demo capacity');
+    for (const call of leaflet.marker.mock.calls.slice(1)) expect((call as unknown as [unknown, { title: string }])[1].title).toContain('Not monitored / estimated capacity');
     rerender(<ClinicMap clinics={catalogueClinics.map(site => ({ ...site }))} selected="tyks-turku" onSelect={select} />);
-    expect(leaflet.instance.setView).toHaveBeenCalledTimes(1);
+    expect(leaflet.instance.fitBounds).toHaveBeenCalledTimes(1);
     const moved = catalogueClinics.map((site, index) => index ? site : { ...site, lat: 61, lon: 25 });
     rerender(<ClinicMap clinics={moved} selected="tyks-turku" onSelect={select} />);
-    expect(leaflet.instance.setView).toHaveBeenCalledTimes(2);
+    expect(leaflet.instance.fitBounds).toHaveBeenCalledTimes(2);
     expect(leaflet.marker).toHaveBeenCalledWith([61, 25], expect.anything());
   });
   it('never invents positions for missing, nonnumeric, infinite or out-of-bounds API coordinates', () => {

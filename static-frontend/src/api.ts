@@ -78,7 +78,7 @@ export const temperature = (value: number | null | undefined) => typeof value ==
 export const dateTime = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' }).format(new Date(value)) : 'Not observed';
 export const words = (value: string) => value.replace(/_/g, ' ').toLowerCase();
 export function connectivity(clinic: Clinic, now = Date.now()) {
-  if (clinic.monitored === false) return 'Not monitored / demo capacity';
+  if (clinic.monitored === false) return 'Not monitored / estimated capacity';
   if (clinic.alarm_state === 'OFFLINE') return 'Offline incident';
   const timestamps = clinic.devices.map(d => d.last_seen ? Date.parse(d.last_seen) : NaN).filter(Number.isFinite);
   if (!timestamps.length) return 'Awaiting device';

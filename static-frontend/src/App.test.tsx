@@ -30,7 +30,7 @@ describe('public dashboard', () => {
     expect(within(list).getAllByRole('button')).toHaveLength(11);
     for (const site of catalogueClinics.slice(1)) {
       const row = within(list).getByRole('button', { name: new RegExp(site.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) });
-      expect(row).toHaveTextContent('Not monitored / demo capacity');
+      expect(row).toHaveTextContent('Not monitored / estimated capacity');
       expect(row).not.toHaveTextContent(/Offline|Awaiting device|No active incident|In range|°C reading/);
       await userEvent.click(row);
       expect(screen.getByRole('heading', { name: new RegExp(site.id) })).toBeInTheDocument();
@@ -173,7 +173,7 @@ describe('public dashboard', () => {
     expect(await screen.findByText('<script>alert(1)</script>')).toBeInTheDocument();
     expect(screen.queryByText('PRIVATE DATA')).not.toBeInTheDocument();
     expect(document.querySelector('.photo-description script')).toBeNull();
-    expect(screen.getByRole('img', { name: /Synthetic demonstration/ })).toHaveAttribute('src', expect.stringContaining('/images/public/content'));
+    expect(screen.getByRole('img', { name: /Synthetic camera/ })).toHaveAttribute('src', expect.stringContaining('/images/public/content'));
   });
 });
 describe('contract safeguards', () => {
