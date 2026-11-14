@@ -1,4 +1,5 @@
 import json
+import random
 import sys
 from pathlib import Path
 
@@ -44,7 +45,7 @@ def clock():
 
 @pytest.fixture
 def wd(data, clock):
-    return Watchdog(*data, clock=clock)
+    return Watchdog(*data, clock=clock, rng=random.Random(42))
 
 
 def test_data_files_are_complete(data):
@@ -171,9 +172,22 @@ def test_healthy_fridge_mirrors_sensor(wd):
     wd.update_reading(5.0, 40.0)
     fridge = wd.fridge_state()
     assert fridge["mode"] == "normal" and fridge["compressor_on"] and not fridge["defrost_active"]
-    assert fridge["display_temp_c"] == pytest.approx(5.3)
+    assert 4.0 <= fridge["display_temp_c"] <= 6.0
     assert wd.check_fridge_tamper() is None
     assert wd.alarm is None
+
+
+def test_healthy_fridge_usually_reads_a_little_lower(wd):
+    diffs = []
+    for _ in range(500):
+        wd.update_reading(5.0, 40.0)
+        diffs.append(wd.fridge_state()["display_temp_c"] - 5.0)
+        assert wd.fridge_state() == wd.fridge_state()  # steady between readings
+    lower = sum(d < 0 for d in diffs) / len(diffs)
+    assert 0.8 <= lower < 1.0  # mostly colder, occasionally not
+    assert -0.5 < sum(diffs) / len(diffs) < -0.1
+    assert max(abs(d) for d in diffs) <= 1.05
+    assert wd.check_fridge_tamper() is None
 
 
 def test_hacked_fridge_raises_h1_alarm_once(wd):
