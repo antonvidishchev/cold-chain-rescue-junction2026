@@ -1,84 +1,86 @@
 # ColdChain Rescue
 
-> *Zero trust. Zero cloud. Zero Vaccines lost.*
+> **Zero trust. Zero cloud. Zero vaccines lost.**
 
-ColdChain Rescue is an independent hardware watchdog sits on edge colocated with fridges. 
-It detects:
-* temperature excursions
-* power loss
-* tampering
-Sounds a local alarm and escalates to the right people until someone acknowledges.
-And choose an action like a transfer of the stock to available storage.
-The transfer respects explicit capacity limits and each product's storage instructions.
+In November 2026, hackers remotely set supermarket fridges across seven
+European countries, including Finland, to as much as 50 °C. Spoiled food costs
+money. A hacked medicine fridge is worse: warm insulin and vaccines look
+exactly the same, and a compromised screen can keep showing "4 °C" while the
+stock gets used anyway.
+
+**ColdChain Rescue puts an autonomous watchdog on every medicine fridge.** It
+is an Arduino Uno Q with its own sensor, siren, LED display and knob, and it
+never trusts the fridge. If the fridge's reported temperature disagrees with
+the watchdog's own sensor, it raises a tamper alarm. It knows what is stored
+inside, works out how long the most sensitive medicine stays safe, and ranks
+nearby hospitals by drive time and free cold-storage space. All of this runs
+on the board, so it keeps working with no internet, no cloud and no power
+grid. The LED code matches a printed runbook, and a human always approves the
+decision.
 
 Built at **Junction 2026** (Espoo). Tracks: **Hardware · Healthcare · Agentic AI**.
 
 ---
 
-## Tech stack
+## Why
 
-Arduino hardware kit based on NEO Q used for edge devices.
-Azure cloud infrastructure is used for control panel applications.
-Python for Arduino and backend, react for frontend.
+- **Smart fridges get hacked.** A fridge that reports "4 °C, all fine" while
+  it is actually warming is worse than one with no monitoring at all.
+- **Temperature alone is not the answer.** What matters is *what is inside*
+  and *how long it survives*. Insulin, vaccines and biologics each have their
+  own storage range and their own maximum time out of the fridge.
+- **The response is the hard part.** Data loggers exist. The hard part is who
+  acts at 3 a.m., and where the stock can go, and whether that place has room.
+- **Cloud and mains are single points of failure.** The moment a fridge fails
+  is often the moment the network or the grid is also down.
 
-## The problem
-
-- **Cold-chain failures are expensive and dangerous.** Vaccines, insulin,
-  biologics and many reagents must stay within a narrow range (often
-  +2 °C … +8 °C). A fridge that fails overnight can destroy thousands of euros
-  of stock. Worse, the stock may still get used without anyone knowing.
-- **Fridges hardware get hacked.** Connected fridges in Europe have been reported
-  compromised. A fridge that reports "4 °C, all fine" while it is actually
-  warming is worse than one with no monitoring at all.
-- **Monitoring alone is familiar.** Data loggers already exist. The hard part
-  is the *coordinated response*: who is told, who confirms, where the stock
-  goes, and whether that place has room and the right conditions.
-
-## Our solution
+## What it does
 
 ```
-Detect  ──►  Alarm locally  ──►  Escalate & acknowledge  ──►  Plan transfer  ──►  human approves
+detect  ──►  alarm locally  ──►  work out the safe window  ──►  rank clinics  ──►  human approves
 ```
 
-1. **Detect.** The Uno Q watchdog reads its own temperature sensor every few
-   seconds and evaluates it against the **storage range of the products
-   actually in the fridge**.
-   <img width="1280" height="780" alt="image" src="https://github.com/user-attachments/assets/74d0a703-ae19-4c9f-8df4-121ea2f0746d" />
+1. **Detect, independently.** The watchdog reads its own Modulino Thermo
+   sensor and compares it with what the (simulated) smart fridge reports about
+   itself. A mismatch above 2 °C means tamper (runbook code **H1**).
+2. **Alarm locally.** Siren on the Modulino Buzzer, a warning sign and a
+   protocol code on the LED matrix. No network needed.
+3. **Know the stock.** The board holds the fridge inventory. The **safe
+   window** is the shortest "max time out of fridge" among the medicines
+   inside, and the dashboard names the limiting medicine.
+4. **Pick the protocol.** A clinic is *reachable* if drive time plus 15 min of
+   packing fits inside the safe window. The board lists reachable clinics by
+   drive time with their free cold-storage capacity and selects **P1…P4**
+   (critical, urgent, watch, pack on site).
+5. **A human decides.** The operator acknowledges the alarm with the
+   Modulino Knob at the fridge, follows the printed [runbook](docs/runbook.md)
+   section that matches the LED code, and turns the knob again when the
+   protocol is done. Nothing is decided for them.
 
-2. **Alarm locally.** If the fridge holds stock and is outside the range for
-   longer than the grace period, the on-board buzzer sounds. This works even
-   when the network is down.
-   <img width="1280" height="821" alt="image" src="https://github.com/user-attachments/assets/9f1e9a4e-8826-4e2a-a40c-3ad8264dbe8c" />
+### Zero trust: the fridge is never believed
 
-4. **Escalate & acknowledge.** The backend raises an alert on the dashboard.
-   Staff acknowledge it, which silences the buzzer and records who took
-   ownership.
-   <img width="3192" height="2006" alt="image" src="https://github.com/user-attachments/assets/f3aa8301-6471-4b29-9b10-85968e8f5188" />
+The Uno Q has its own sensor and its own power. The simulated smart fridge
+exposes the fields typical commercial units offer (screen temperature,
+setpoint, door, compressor, defrost, power draw, online status). After
+`hack_fridge` the screen keeps showing a calm temperature while the
+controller defrosts, as in the 2026 supermarket attacks. The watchdog sees
+the difference and raises H1. A compromised controller cannot hide a real
+temperature rise. Readings are only alarm-relevant when the fridge holds
+stock: an empty fridge cannot lose anything.
 
-   <img width="1630" height="1387" alt="image" src="https://github.com/user-attachments/assets/b6b222c8-33e6-4e93-a47d-bed99a054cae" />
+### Zero cloud: everything essential runs on the board
 
-5. **Plan a transfer.** If the cooling cannot be restored (for example, the
-   power is out and the backup is not holding), ColdChain Rescue proposes
-   moving the stock to alternative storage. It checks free capacity and
-   whether each product's range is compatible with the target's range.
-   <img width="1280" height="796" alt="image" src="https://github.com/user-attachments/assets/cb468988-640c-4eec-beac-a063a3346437" />
+Detection, safe-window maths, clinic ranking, the alarm, the LED code, the
+knob acknowledgement and the dashboard API (port 7000) all run on the Uno Q.
+The Azure cloud backend is an optional extra for history and operator
+visibility. Events are sent from a background thread with retries, and the
+watchdog keeps working when the backend is unreachable.
 
-6. **Human approval.** Nothing moves until a person approves the plan.
+### Zero vaccines lost: the runbook closes the loop
 
-### Independent watchdog & tamper detection
-
-The Uno Q does **not** trust the fridge. It has its own sensor and its own
-power, and it compares its reading with the temperature the (smart) fridge
-reports about itself. If they disagree by more than a tolerance for a
-sustained period, ColdChain Rescue raises a **TAMPER** alert in addition to
-the normal excursion workflow. A compromised fridge controller cannot hide a
-real temperature rise.
-
-### Product instructions govern thresholds
-
-Thresholds are **not** one global number. Every product carries its own
-storage instructions (min/max °C, allowed excursion time). The fridge's
-effective range is the intersection of the ranges of the products inside it.
+Every LED code (`P1`…`P4`, `H1`, doors warning) matches a section of the
+printed [operator runbook](docs/runbook.md). The dashboard shows the same
+section in large type, so screen and paper always agree.
 
 > ⚠️ **Temperature readings alone cannot establish whether a medicine is still
 > usable.** ColdChain Rescue flags excursions and supports the response. The
@@ -95,63 +97,69 @@ something goes wrong at 3 a.m.
 
 ```mermaid
 flowchart LR
-  subgraph UnoQ["Arduino Uno Q (watchdog)"]
+  subgraph UnoQ["Arduino Uno Q (autonomous watchdog)"]
     T[Modulino Thermo] -->|I²C / Qwiic| MCU[STM32 sketch]
     MCU --> B[Modulino Buzzer]
+    MCU --> M[LED matrix]
     K[Modulino Knob] -->|I²C / Qwiic| MCU
-    MCU <-->|Bridge RPC| PY[Python app on Linux MPU]
+    MCU <-->|Bridge RPC| PY[Python app on Linux MPU<br/>logic · inventory · clinics · REST :7000]
   end
-  PY -->|HTTP: telemetry, config, commands| API[FastAPI backend]
-  API --- DB[(SQLite)]
-  API <-->|REST + WebSocket| UI[React dashboard]
-  SIM[Simulator panel<br/>power · camera · fridge report] --> API
-  UI --- SIM
+  SIM[Simulated smart fridge<br/>+ camera + power] --> PY
+  PY <-->|REST| UI[React dashboard<br/>+ printed runbook]
+  PY -.->|optional, background, retried| CLOUD[Azure Functions<br/>+ Table Storage]
+  CLOUD --> PUB[Public static frontend]
 ```
+
+The solid lines are everything the demo needs. The dashed line is optional.
 
 | Part | Tech | Role |
 | --- | --- | --- |
-| `device/coldchain-watchdog` | Arduino App Lab app for **Uno Q** (sketch + Python, WebUI brick) | Holds the fridge inventory and nearby clinics, reads the sensor, reacts to simulated events with buzzer patterns and LED-matrix messages, serves a REST API on port 7000, reports events through backend stubs |
-| `backend` | Python 3.12+, **FastAPI**, Azure Functions & Table storage | Collects telemetry, evaluates thresholds and tamper rules, manages alerts, inventory, capacity and transfer plans, pushes live updates |
-| `frontend` | **React + Vite + TypeScript**, Tailwind, Recharts | Runs locally. Dashboard (fridges, live temperature, alerts, transfer plans) and the simulator panel used in the demo |
-| `static-frontend` | **React + Vite + TypeScript**, Tailwind, Recharts | Runs in the cloud. Dashboard (fridges, live temperature, alerts, transfer plans) and the simulator panel used in the demo |
+| `device/coldchain-watchdog` | Arduino App Lab app for **Uno Q** (sketch + Python, WebUI brick) | Holds the fridge inventory and nearby clinics, reads the sensor, compares it with the simulated fridge, drives buzzer patterns and LED-matrix messages, handles knob acknowledgement, serves a REST API on port 7000, reports events to the cloud backend |
+| `frontend` | **React + Vite + TypeScript**, Tailwind | Watchdog dashboard that talks directly to the board: live temperature, inventory, clinics (table and map), runbook panel, camera, collapsible simulate panel |
+| `backend` | Python, **Azure Functions** (ASGI), Table Storage | Optional cloud backend: device-authenticated ingestion, incidents, history, public read APIs. See [backend/README.md](backend/README.md) and [backend/CLOUD_API.md](backend/CLOUD_API.md). `app.main:app` is the older local SQLite prototype |
+| `static-frontend` | React + TypeScript + Vite | Public read-only demo of the cloud data (Finland map). See [static-frontend/README.md](static-frontend/README.md) |
 
-The detailed data contracts and state machine are in
-[docs/architecture.md](docs/architecture.md).
+The older data contracts and state machine are in
+[docs/architecture.md](docs/architecture.md); the board's own behaviour is
+described below.
 
-### Alarm states
+### Alarm behaviour
 
 ```
-NORMAL ──out of range──► WARNING ──grace period elapsed & stock present──► EXCURSION
-   ▲                                                                          │
-   └──────────────── back in range (alert stays until acknowledged) ◄─────────┘
-
-POWER_LOSS : fridge power reported down (simulated); escalates faster, triggers transfer planning
-TAMPER     : |device reading − fridge-reported reading| > tolerance for a sustained period
+unfreeze (stocked)   : blocked, operator notified, runbook check
+power_outage         : siren, safe-window countdown, protocol P1..P4, clinic call list
+doors_open           : "CLOSE THE DOORS" marquee + chime, ends on close or knob
+hack_fridge (H1)     : |Arduino sensor - fridge screen| > 2 C -> siren + H1
+knob x5 clockwise    : acknowledge (buzzer off, alarm stays open)
+knob x5 clockwise    : resolve (protocol done); also resolves the cloud alert
 ```
+
+For the demo the sketch shifts every Thermo reading by `DEMO_TEMP_OFFSET_C`
+(currently -17 °C) so a room-temperature board behaves like a fridge. Set it
+to `0.0` for real readings. A healthy fridge screen in the demo band is shown
+as a steady 4.5 °C.
 
 ## Demo script (peer demo)
 
 Full version: [docs/demo-script.md](docs/demo-script.md).
 
-1. The dashboard shows **Pharmacy Fridge A** holding insulin and vaccines
-   (2–8 °C), plus two backup storage locations with explicit free capacity.
-2. **Warm the sensor** (hold the Modulino Thermo in your hand). The temperature
-   rises, WARNING appears, and then EXCURSION: **the buzzer sounds** and an
-   alert pops up.
-3. A staff member **acknowledges** the alert. The buzzer silences and the
-   owner is recorded.
-4. In the simulator, **cut the fridge power**. The state becomes POWER_LOSS
-   and a **transfer plan** is proposed: what goes where, with capacity checked.
-5. A pharmacist **approves** the plan.
-6. **Tamper scenario:** the simulated smart fridge keeps reporting "4.0 °C"
-   while the watchdog measures 12 °C. A **TAMPER** alert is raised.
+1. The dashboard shows the fridge holding insulin and vaccines (2–8 °C), the
+   safe window and the nearby clinics ranked by drive time.
+2. **Hack the fridge.** Its screen keeps saying 4.0 °C while it defrosts. The
+   Arduino sensor disagrees: siren, `H1` on the LED matrix, runbook H1 on screen.
+3. **Acknowledge with the knob** (5 clicks). The siren stops; the alarm stays open.
+4. **Reset**, then **cut the power**. The safe window counts down, the board
+   picks a protocol (P1 with the full inventory) and lists reachable clinics.
+5. The operator follows the runbook, **turns the knob again**, and the stock is
+   marked as moved.
+6. **Doors open** shows the seatbelt-style warning, ended with a single knob turn.
 
 ## Repository layout
 
 ```
 device/coldchain-watchdog/   Arduino App Lab app for the Uno Q
   app.yaml                   App Lab manifest (WebUI brick, port 7000)
-  sketch/                    STM32 sketch: Modulino Thermo, buzzer patterns, LED matrix
+  sketch/                    STM32 sketch: Thermo, buzzer patterns, LED matrix, knob
   python/main.py             Linux-side app: REST API, Bridge calls, event loop
   python/logic.py            command handling, safe window, clinic selection, protocol
   python/backend_stub.py     cloud backend client (log only unless BACKEND_ENABLED=1)
@@ -159,13 +167,11 @@ device/coldchain-watchdog/   Arduino App Lab app for the Uno Q
   python/data/               medicines.json (inventory), clinics.json (main site + 10 clinics)
   assets/camera/             simulated fridge camera stills (960×540 JPEG), served at /camera/
   tests/                     unit tests for logic.py
-backend/                     FastAPI service
-  app/api/                   HTTP + WebSocket routes
-  app/domain/                thresholds, tamper check, alarm state machine, transfer planner
-  app/agent/                 (planned) agentic escalation & planning
-  seed/                      demo products, storage locations, stock
-  tests/
-frontend/                    React dashboard + simulator
+backend/                     Azure Functions cloud backend (+ legacy local FastAPI prototype)
+  function_app.py            Functions entry point; app/cloud/ holds the API
+  seed/, tests/
+frontend/                    React watchdog dashboard (talks to the board)
+static-frontend/             public read-only demo frontend for the cloud data
 docs/                        architecture, demo script, operator runbook (runbook.md)
 scripts/deploy-device.sh     deploy the watchdog app to the Uno Q over adb
 ```
@@ -308,7 +314,13 @@ uv run --no-project --with pytest pytest device/coldchain-watchdog/tests
 cd backend && uv run pytest
 ```
 
-### Backend (optional, legacy local app)
+### Cloud backend (optional)
+
+For the Azure Functions backend (Azurite, `func start`, device keys) follow
+[backend/README.md](backend/README.md); the public frontend is in
+[static-frontend/](static-frontend/README.md). Tests: `cd backend && uv run pytest`.
+
+### Legacy local backend
 
 ```bash
 cd backend
@@ -356,23 +368,22 @@ is gitignored too. Never commit keys or print request headers.
 - **No temperature / no beeps:** check the Qwiic chain. The sketch uses
   `Modulino.begin(Wire1)`, which is the Qwiic bus on the Uno Q.
 
-## Weekend scope
+## Scope and limits
 
-- One sensor, one monitored fridge, two alternative storage locations
-- Explicit capacity constraints and per-product storage ranges
-- Local buzzer + dashboard alerts with acknowledgement
-- Simulated power loss, simulated camera ("stock present") and simulated
-  smart-fridge self-reports
-- Transfer proposal with mandatory human approval
+- One watchdog, one monitored fridge, demo inventory and ten nearby clinics
+  with drive times and cold-storage capacity
+- Simulated: smart-fridge feed, fridge camera, power loss and the hack
+- Local buzzer, LED code, knob acknowledgement and dashboard, all offline
+- Optional cloud backend with device-key authentication
 
 **Not in scope:** real fridge integration, real camera vision, regulatory-grade
-logging, SMS/phone escalation.
+logging, SMS/phone escalation, live traffic for drive times.
 
 ## Roadmap
 
-- **Agentic escalation & planning** (Claude with tools): run the escalation
-  ladder, draft and explain transfer plans and coordinate couriers. A
-  deterministic constraint checker stays authoritative.
+- **Agentic planning** (Claude with tools) to draft and explain transfer
+  plans and coordinate couriers, with a deterministic constraint checker and
+  mandatory human approval staying authoritative
 - Camera-based stock detection on the Uno Q
 - Signed telemetry (HMAC) so spoofed readings are rejected
 - Telegram / SMS / email escalation channels

@@ -49,6 +49,9 @@ FRIDGE_SETPOINT_C = 5.0
 FRIDGE_SENSOR_OFFSET_C = -0.3
 FRIDGE_SENSOR_NOISE_C = 0.2  # standard deviation per reading
 FRIDGE_SENSOR_MAX_DEV_C = 1.0
+# DEMO ONLY: a healthy screen reading in this band is shown as a steady 4.5 C.
+FRIDGE_DEMO_BAND_C = (4.1, 4.9)
+FRIDGE_DEMO_DISPLAY_C = 4.5
 FAKE_DISPLAY_TEMP_C = 4.0  # what a hacked fridge screen keeps showing
 TAMPER_TOLERANCE_C = 2.0  # max |Arduino - fridge screen| before the alarm
 FRIDGE_POWER_NORMAL_W = 85.0
@@ -188,6 +191,9 @@ class Watchdog:
             display = FAKE_DISPLAY_TEMP_C
         elif self.temp_c is not None:
             display = round(self.temp_c + self.fridge_offset_c, 1)
+            low, high = FRIDGE_DEMO_BAND_C
+            if low <= display <= high:
+                display = FRIDGE_DEMO_DISPLAY_C
         else:
             display = FRIDGE_SETPOINT_C
         return {
