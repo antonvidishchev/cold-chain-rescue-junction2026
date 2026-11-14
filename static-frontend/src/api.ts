@@ -5,6 +5,10 @@ export interface Clinic {
   reported_temp_c?: number | null; reported_temp_at?: string | null;
   power_on: boolean; effective_range: { min_c: number; max_c: number }; devices: Device[];
   used_units: number; free_units: number;
+  active?: boolean; monitored?: boolean;
+  address?: string; phone?: string; lat?: number | null; lon?: number | null;
+  distance_km?: number | null; drive_minutes?: number | null;
+  accepts_after_hours?: boolean | null; capacity_units?: number | null;
 }
 export interface Reading { id: number; ts: string; temp_c: number; fridge_display_temp_c?: number | null; humidity?: number | null; stale: boolean; alarm_active: boolean }
 export interface DeviceInventory {
@@ -74,6 +78,7 @@ export const temperature = (value: number | null | undefined) => typeof value ==
 export const dateTime = (value: string | null | undefined) => value && Number.isFinite(Date.parse(value)) ? new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' }).format(new Date(value)) : 'Not observed';
 export const words = (value: string) => value.replace(/_/g, ' ').toLowerCase();
 export function connectivity(clinic: Clinic, now = Date.now()) {
+  if (clinic.monitored === false) return 'Not monitored / demo capacity';
   if (clinic.alarm_state === 'OFFLINE') return 'Offline incident';
   const timestamps = clinic.devices.map(d => d.last_seen ? Date.parse(d.last_seen) : NaN).filter(Number.isFinite);
   if (!timestamps.length) return 'Awaiting device';
@@ -81,6 +86,7 @@ export function connectivity(clinic: Clinic, now = Date.now()) {
 }
 export function observationStale(timestamp: string | null) { return !timestamp || !Number.isFinite(Date.parse(timestamp)) || Date.now() - Date.parse(timestamp) > 120_000; }
 export function measurement(clinic: Clinic) {
+  if (clinic.monitored === false) return 'Not monitored';
   if (clinic.last_temp_c == null) return 'No measurement';
   return clinic.last_temp_c < clinic.effective_range.min_c || clinic.last_temp_c > clinic.effective_range.max_c ? 'Outside range' : 'In range at observation';
 }

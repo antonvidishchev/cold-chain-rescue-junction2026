@@ -158,7 +158,8 @@ class CloudService:
             pass
 
     def device(self, device_id: str) -> dict:
-        return _get(self.state(), "devices", device_id)
+        device, _ = self._location_for(self.state(), device_id)
+        return device
 
     def device_inventory(self, device_id: str) -> dict:
         device = self.device(device_id)
@@ -178,6 +179,8 @@ class CloudService:
     def _location_for(state: dict, device_id: str, clinic_id: str | None = None, location_id: str | None = None):
         device = _get(state, "devices", device_id)
         location = _get(state, "locations", device["location_id"])
+        if not device.get("active", True) or not location.get("active", True):
+            raise HTTPException(409, "Device or location is retired")
         if clinic_id is not None and clinic_id not in {location["clinic_id"], location["id"]}:
             raise HTTPException(422, "Device/clinic mismatch")
         if location_id is not None and location_id != location["id"]:
@@ -212,6 +215,8 @@ class CloudService:
         state = self.state()
         result = []
         for location in state["locations"].values():
+            if not location.get("active", True):
+                continue
             stock = [{**s, "product": state["products"][s["product_id"]]} for s in state["stock"].values()
                      if s["location_id"] == location["id"]]
             used = sum(s["units"] for s in stock)
@@ -219,7 +224,7 @@ class CloudService:
             result.append({**location, "stock": stock, "used_units": used,
                 "free_units": location["capacity_units"] - used, "stock_present": self._stock_present(state, location),
                 "effective_range": {"min_c": rng.min_c, "max_c": rng.max_c},
-                "devices": [d for d in state["devices"].values() if d["location_id"] == location["id"]]})
+                "devices": [d for d in state["devices"].values() if d["location_id"] == location["id"] and d.get("active", True)]})
         return result
 
     @staticmethod
@@ -369,7 +374,7 @@ class CloudService:
 
     def pending(self, device_id: str) -> list[dict]:
         state = self.state()
-        _get(state, "devices", device_id)
+        self._location_for(state, device_id)
         return self._pending(state, device_id)
 
     @staticmethod
@@ -408,7 +413,7 @@ class CloudService:
 
     def ack_command(self, device_id: str, command_id: str) -> dict:
         def operation(state):
-            device = _get(state, "devices", device_id)
+            device, _ = self._location_for(state, device_id)
             command = _get(state, "commands", command_id)
             if command["device_id"] != device_id:
                 raise HTTPException(404, "Command not found")
@@ -465,7 +470,7 @@ class CloudService:
                 items.append(planner.Item(stock["id"], product["id"], product["name"], Range(product["min_c"], product["max_c"]), stock["quantity"], stock["units"]))
             targets = [planner.Target(loc["id"], loc["name"], loc["kind"], Range(loc["min_c"], loc["max_c"]),
                 loc["capacity_units"] - sum(s["units"] for s in state["stock"].values() if s["location_id"] == loc["id"]), loc["power_on"])
-                for loc in state["locations"].values() if loc["id"] != source_id]
+                for loc in state["locations"].values() if loc["id"] != source_id and loc.get("active", True)]
             result = planner.propose(items, targets)
             identifier = _id(state)
             plan = {"id": identifier, "source_location_id": source["id"], "status": "proposed", "created_at": stamp(),
@@ -488,7 +493,7 @@ class CloudService:
                 used = sum(s["units"] for s in state["stock"].values() if s["location_id"] == target["id"])
                 if item["location_id"] != plan["source_location_id"] or item["quantity"] != move["quantity"] or item["units"] != move["units"]:
                     raise HTTPException(409, "Inventory changed; propose a new plan")
-                if not target["power_on"] or used + item["units"] > target["capacity_units"] or not Range(target["min_c"], target["max_c"]).fits_within(Range(product["min_c"], product["max_c"])):
+                if not target.get("active", True) or not target["power_on"] or used + item["units"] > target["capacity_units"] or not Range(target["min_c"], target["max_c"]).fits_within(Range(product["min_c"], product["max_c"])):
                     raise HTTPException(409, "Target conditions changed; propose a new plan")
                 item["location_id"] = target["id"]
             plan.update(status="approved", approved_by=by, approved_at=stamp())
@@ -518,6 +523,8 @@ class CloudService:
         def operation(state):
             overdue = []
             for device in state["devices"].values():
+                if not device.get("active", True):
+                    continue
                 seen = datetime.fromisoformat(device["last_seen"] or device["registered_at"])
                 offline = (current - seen).total_seconds() >= Settings.load().offline_seconds
                 location = state["locations"][device["location_id"]]

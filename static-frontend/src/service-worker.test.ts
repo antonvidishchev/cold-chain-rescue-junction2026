@@ -11,7 +11,7 @@ it('renders only notification text and rejects external notification click URLs'
   const waitUntil = (value: Promise<unknown>) => { promise = value; };
   handlers.push({ data: { json: () => ({ id: '1', message: '<b>not HTML</b>', location_id: 'fridge-a', url: 'https://evil.example' }) }, waitUntil });
   await promise;
-  expect(showNotification).toHaveBeenCalledWith('Cold Chain · fictional demo', expect.objectContaining({ body: '<b>not HTML</b>', data: { url: 'https://demo.example/?clinic=fridge-a#incidents' } }));
+  expect(showNotification).toHaveBeenCalledWith('Cold Chain · demo scenario', expect.objectContaining({ body: '<b>not HTML</b>', data: { url: 'https://demo.example/?clinic=fridge-a#incidents' } }));
   handlers.notificationclick({ notification: { close: vi.fn(), data: { url: 'https://evil.example/' } }, waitUntil });
   await promise;
   expect(openWindow).toHaveBeenCalledWith('https://demo.example/');

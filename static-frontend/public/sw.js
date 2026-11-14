@@ -7,7 +7,7 @@ self.addEventListener('push', event => {
   const target = new URL('/', self.location.origin);
   if (typeof payload.location_id === 'string') target.searchParams.set('clinic', payload.location_id);
   target.hash = 'incidents';
-  event.waitUntil(self.registration.showNotification('Cold Chain · fictional demo', {
+  event.waitUntil(self.registration.showNotification('Cold Chain · demo scenario', {
     body: text(payload.message) || 'A demo clinic incident was recorded.',
     tag: `coldchain-${text(String(payload.id ?? 'incident'))}`,
     data: { url: target.href },

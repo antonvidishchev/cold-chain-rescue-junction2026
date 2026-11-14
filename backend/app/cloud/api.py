@@ -170,7 +170,7 @@ def create_app(store=None, media=None) -> FastAPI:
 
     @application.get("/api/devices")
     def devices():
-        return [_public_device(device) for device in service().state()["devices"].values()]
+        return [_public_device(device) for device in service().state()["devices"].values() if device.get("active", True)]
 
     @application.get("/api/devices/{device_id}/config")
     def config(device_id: str, request: Request):

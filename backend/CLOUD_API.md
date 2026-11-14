@@ -10,6 +10,25 @@ Credentials never come from Table records. Public devices are allowlisted; neste
 
 Production storage uses `STORAGE_ACCOUNT_URL`, the HTTPS **Table** service endpoint, with `DefaultAzureCredential`. `STORAGE_CONNECTION_STRING` is accepted only for local/Azurite endpoints. `COLDCHAIN_TABLE_NAME` defaults to `ColdChain`. There is no in-memory runtime fallback and no SQLite access. Tests must explicitly inject `MemoryStore` through `create_app(store=..., media=...)`.
 
+### Arduino clinic catalogue migration
+
+The deployed catalogue is sourced from an unchanged copy of the device's
+`python/data/clinics.json`, packaged as `app/cloud/data/clinics.json` (parity tested).
+It contains Espoonlahti main plus ten destination hospitals. Names/coordinates are
+catalogue locations; capacities, drive times and destination power availability are
+**demo assumptions, not verified hospital availability**. Destinations have no fake
+sensor devices and are `monitored:false`.
+
+Run `python -m app.cloud.migrate_clinics` to preview and add `--apply` to migrate.
+The primary internal location ID remains `fridge-a` and device ID remains
+`unoq-fridge-a`, preserving credentials and historical references. Its clinic ID is
+now `espoonlahti-main`. Old placeholders and their devices become `active:false`;
+active clinic/device lists and transfer targets exclude them. Historical rows and
+stock are retained, not deleted or silently moved. Retired device operations reject
+with 409. Repeating migration does not reset readings, stock or device state.
+Fresh CLI bootstrap applies this catalogue after initial fixture creation; an
+existing database requires the explicit migration command.
+
 ### Explicit initialization
 
 From `backend`, after configuring environment variables:

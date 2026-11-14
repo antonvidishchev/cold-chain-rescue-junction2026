@@ -37,7 +37,7 @@ export default function PushOptIn() {
         await request(`/push/subscriptions/${encodeURIComponent(next.id)}`, { method: 'DELETE', headers: { Authorization: `Bearer ${next.token}` } });
         throw new Error('Browser storage is unavailable; subscription was not saved.');
       }
-      setRecord(next); setMessage('Enabled for all fictional clinics on this browser. Delivery is best effort.');
+      setRecord(next); setMessage('Enabled for all demo locations on this browser. Delivery is best effort.');
     } catch (error) {
       if (created && subscription) await subscription.unsubscribe().catch(() => false);
       setMessage(error instanceof Error ? error.message : 'Could not enable notifications.');

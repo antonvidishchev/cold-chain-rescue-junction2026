@@ -2,6 +2,7 @@ import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
 import App from './App';
+import { catalogueClinics } from './clinic-fixtures';
 import { connectivity, measurement, normalizeBase, request, type Clinic } from './api';
 vi.mock('./ClinicMap', () => ({ default: () => <div aria-label="Map stub" /> }));
 const now = new Date().toISOString();
@@ -18,12 +19,36 @@ function mockApi(extra?: (url: URL) => Promise<Response> | undefined) {
   });
 }
 describe('public dashboard', () => {
+  it('shows the catalogue main site and ten unmonitored partners without false device states', async () => {
+    const fetcher = mockApi(url => url.pathname.endsWith('/clinics') ? Promise.resolve(json([
+      ...catalogueClinics.slice(1), catalogueClinics[0], { ...clinics[1], active: false },
+    ])) : undefined);
+    vi.stubGlobal('fetch', fetcher);
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: /Espoonlahti Clinic.*Main monitored site/ })).toBeInTheDocument();
+    const list = screen.getByLabelText('Choose a clinic');
+    expect(within(list).getAllByRole('button')).toHaveLength(11);
+    for (const site of catalogueClinics.slice(1)) {
+      const row = within(list).getByRole('button', { name: new RegExp(site.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) });
+      expect(row).toHaveTextContent('Not monitored / demo capacity');
+      expect(row).not.toHaveTextContent(/Offline|Awaiting device|No active incident|In range|°C reading/);
+      await userEvent.click(row);
+      expect(screen.getByRole('heading', { name: new RegExp(site.id) })).toBeInTheDocument();
+      expect(screen.queryByText('Sensor temperature')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Reported on|Waiting for the first temperature/)).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Device event reports' })).not.toBeInTheDocument();
+    }
+    expect(screen.getByText('172 km')).toBeInTheDocument();
+    expect(screen.getByText('120 min')).toBeInTheDocument();
+    expect(fetcher.mock.calls.some(([url]) => /location_id=(?!fridge-a)/.test(String(url)))).toBe(false);
+    expect(fetcher.mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
+  });
   it('selects live clinics, never substitutes temperatures or makes operator calls', async () => {
     const fetcher = mockApi(); vi.stubGlobal('fetch', fetcher);
     render(<App />);
-    expect(await screen.findByRole('heading', { name: /Helsinki\s*Fictional clinic/ })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Helsinki Demo Clinic.*Monitored site/ })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /^Espoo/ }));
-    expect(await screen.findByRole('heading', { name: /Espoo\s*Fictional clinic/ })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Espoo Demo Clinic.*Monitored site/ })).toBeInTheDocument();
     await waitFor(() => expect(fetcher.mock.calls.some(([url]) => String(url).includes('location_id=fridge-b'))).toBe(true));
     expect(screen.getByText(/No public synthetic images/)).toBeInTheDocument();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
@@ -46,12 +71,12 @@ describe('public dashboard', () => {
     const fetcher = mockApi(url => url.pathname.endsWith('/readings') && url.searchParams.get('location_id') === 'fridge-a' ? new Promise(resolve => { resolveOld = resolve; }) : undefined);
     vi.stubGlobal('fetch', (url: string, options?: RequestInit) => { if (url.includes('/readings?location_id=fridge-a')) oldSignal = options?.signal; return fetcher(url, options); });
     window.history.replaceState(null, '', '/'); render(<App />);
-    await screen.findByRole('heading', { name: /Helsinki\s*Fictional clinic/ });
+    await screen.findByRole('heading', { name: /Helsinki Demo Clinic.*Monitored site/ });
     await waitFor(() => expect(resolveOld).toBeDefined());
     await userEvent.click(screen.getByRole('button', { name: /^Espoo/ }));
     expect(oldSignal?.aborted).toBe(true);
     await act(async () => resolveOld(json([{ id: 991, ts: now, temp_c: 99, stale: false, alarm_active: true }])));
-    expect(screen.getByRole('heading', { name: /Espoo\s*Fictional clinic/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Espoo Demo Clinic.*Monitored site/ })).toBeInTheDocument();
     expect(screen.queryByRole('img', { name: /99 degrees/ })).not.toBeInTheDocument();
   });
   it('renders watchdog mismatch, nullable codes and knob completion without claiming recovery', async () => {
