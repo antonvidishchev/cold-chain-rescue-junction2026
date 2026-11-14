@@ -335,29 +335,45 @@ class Watchdog:
                 return self._resolve_by_knob()
             return None
 
-        acknowledged = []
+        stubs: list[tuple[str, dict[str, Any]]] = []
+        done = []
+        if doors:
+            # Doors open: the only remedy is closing them, so a single turn
+            # resolves the warning (no acknowledge step).
+            self.doors_open_until = 0.0
+            done.append("doors left open resolved")
+            stubs.append((
+                "report_alarm_resolved",
+                {
+                    "alarm_kind": None,
+                    "code": None,
+                    "acknowledged_at": None,
+                    "doors": True,
+                    "resolved_by": "knob",
+                },
+            ))
         if pending_alarm:
             self.alarm["acknowledged_at"] = now
             self.alarm["acknowledged_by"] = "knob"
-            acknowledged.append(self.alarm["title"])
-        if doors:
-            self.doors_open_until = 0.0
-            acknowledged.append("doors left open")
+            done.append(f"{self.alarm['title']} acknowledged")
+            stubs.append((
+                "report_alarm_ack",
+                {
+                    "alarm_kind": self.alarm["kind"],
+                    "code": self.alarm.get("protocol"),
+                    "doors": False,
+                    "acknowledged_by": "knob",
+                },
+            ))
         self.ack_message_until = now + ACK_MESSAGE_SECONDS
-        msg = f"Acknowledged at the fridge (knob): {', '.join(acknowledged)}"
-        self._log("alarm_ack", msg)
-        payload = {
-            "alarm_kind": self.alarm["kind"] if self.alarm else None,
-            "code": self.alarm.get("protocol") if self.alarm else None,
-            "doors": doors,
-            "acknowledged_by": "knob",
-        }
+        msg = f"Handled at the fridge (knob): {', '.join(done)}"
+        self._log("alarm_resolved" if not pending_alarm else "alarm_ack", msg)
         return Outcome(
-            "knob_ack",
+            "knob_resolve" if not pending_alarm else "knob_ack",
             msg,
             pattern=PATTERN_ACK,
-            display=("text", ACK_TEXT),
-            stubs=[("report_alarm_ack", payload)],
+            display=("text", ACK_TEXT if pending_alarm else RESOLVED_TEXT),
+            stubs=stubs,
         )
 
     # ----- commands ----------------------------------------------------
