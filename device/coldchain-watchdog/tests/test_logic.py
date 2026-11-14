@@ -170,6 +170,24 @@ def test_hacked_fridge_raises_h1_alarm_once(wd):
     assert wd.snapshot()["fridge_mismatch_c"] == pytest.approx(-18.0)
 
 
+def test_hack_warms_fridge_and_raises_h1_at_demo_temperature(wd):
+    wd.update_reading(2.0, 40.0)  # board offset to fridge level for the demo
+    wd.handle("hack_fridge")
+    assert wd.check_fridge_tamper() is None  # screen 4.0 vs sensor 2.0: not yet
+    wd.clock.t += 10
+    wd.update_reading(2.0, 40.0)
+    assert wd.temp_c == pytest.approx(12.0) and wd.raw_temp_c == pytest.approx(2.0)
+    assert wd.fridge_state()["display_temp_c"] == 4.0
+    out = wd.check_fridge_tamper()
+    assert out is not None and out.display == ("alarm", "H1")
+    wd.clock.t += 1000
+    wd.update_reading(2.0, 40.0)
+    assert wd.temp_c == pytest.approx(12.0)  # warming is capped
+    wd.handle("reset")
+    wd.update_reading(2.0, 40.0)
+    assert wd.temp_c == pytest.approx(2.0)
+
+
 def test_small_mismatch_is_tolerated(wd):
     wd.update_reading(5.0, 40.0)
     wd.handle("hack_fridge")  # screen shows 4.0, sensor 5.0: within tolerance
