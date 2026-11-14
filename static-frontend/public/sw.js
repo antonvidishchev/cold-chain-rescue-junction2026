@@ -1,4 +1,4 @@
-/* Public-demo push only. No API or map tile caching. */
+/* Public notification delivery only. No API or map tile caching. */
 self.addEventListener('push', event => {
   let payload;
   try { payload = event.data?.json(); } catch { return; }
@@ -7,8 +7,8 @@ self.addEventListener('push', event => {
   const target = new URL('/', self.location.origin);
   if (typeof payload.location_id === 'string') target.searchParams.set('clinic', payload.location_id);
   target.hash = 'incidents';
-  event.waitUntil(self.registration.showNotification('Cold Chain · fictional demo', {
-    body: text(payload.message) || 'A demo clinic incident was recorded.',
+  event.waitUntil(self.registration.showNotification('Cold Chain · demo scenario', {
+    body: text(payload.message) || 'A clinic incident was recorded.',
     tag: `coldchain-${text(String(payload.id ?? 'incident'))}`,
     data: { url: target.href },
   }));

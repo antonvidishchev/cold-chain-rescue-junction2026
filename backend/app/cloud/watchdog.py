@@ -220,7 +220,8 @@ def ingest_watchdog(service, body: Envelope) -> dict:
                 service._incident(state, location, "TAMPER", True,
                                   "H1: device reports fridge display disagrees with independent sensor; inspect the unit", "H1")
                 alert = next(a for a in state["alerts"].values() if a["location_id"] == location["id"]
-                             and a["type"] == "TAMPER" and a.get("recovered_at") is None)
+                             and a["type"] == "TAMPER" and a.get("recovered_at") is None
+                             and a["status"] != "resolved_by_user")
                 alert.update(protocol="H1", device_reported_assessment=data, assessment_source="device_unverified")
             elif event in {"alarm_acknowledged", "alarm_resolved"}:
                 kind = {"power_outage": "POWER_LOSS", "fridge_tamper": "TAMPER", "unfreeze": "UNFREEZE_CHECK"}.get(data["alarm_kind"])
@@ -229,7 +230,8 @@ def ingest_watchdog(service, body: Envelope) -> dict:
                     kinds.add("DOORS_OPEN")
                 resolving = event == "alarm_resolved"
                 for alert in state["alerts"].values():
-                    if alert["location_id"] != location["id"] or alert["type"] not in kinds or body.ts < alert["created_at"]:
+                    if (alert["location_id"] != location["id"] or alert["type"] not in kinds
+                            or alert["status"] == "resolved_by_user" or body.ts < alert["created_at"]):
                         continue
                     # Acknowledge only live incidents; resolve any not yet resolved.
                     if alert.get("recovered_at") is not None if not resolving else alert["status"] == "resolved":
@@ -249,13 +251,8 @@ def ingest_watchdog(service, body: Envelope) -> dict:
             elif event == "doors_open":
                 service._incident(state, location, "DOORS_OPEN", True, "Device reports doors left open; inspect the unit")
             elif event == "unfreeze_check_required":
-                identifier = str(_id(state))
-                state["notifications"][identifier] = {
-                    "id": identifier, "alert_id": None, "device_id": device["id"],
-                    "location_id": location["id"], "type": event, "severity": "warning",
-                    "message": "Device reports stock during unfreeze; operator inspection required",
-                    "created_at": received, "status": "pending", "event_id": event_id,
-                }
+                service._incident(state, location, "UNFREEZE_CHECK", True,
+                                  "Device reports stock during unfreeze; operator inspection required")
             elif event == "power_outage":
                 device["last_status_at"] = body.ts
                 device["status"] = "power_outage"
@@ -263,7 +260,8 @@ def ingest_watchdog(service, body: Envelope) -> dict:
                 service._incident(state, location, "POWER_LOSS", True,
                                   "Explicit power outage: follow protocol 25; independently assess stock", 25)
                 alert = next(a for a in state["alerts"].values() if a["location_id"] == location["id"]
-                             and a["type"] == "POWER_LOSS" and a.get("recovered_at") is None)
+                             and a["type"] == "POWER_LOSS" and a.get("recovered_at") is None
+                             and a["status"] != "resolved_by_user")
                 alert.update(device_reported_protocol=data["protocol"],
                              device_reported_assessment={k: v for k, v in data.items() if k != "protocol"},
                              assessment_source="device_unverified", clinical_safety_certified=False)

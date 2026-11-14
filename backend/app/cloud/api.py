@@ -4,17 +4,20 @@ import hashlib
 import importlib
 import io
 import warnings
+from collections import OrderedDict
 from datetime import timedelta
+from threading import Lock
+from time import monotonic
 from typing import Annotated, Literal
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Path, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.cloud.auth import require_device, require_operator
-from app.cloud.service import CloudService, observed, stamp, utcnow
+from app.cloud.service import CHECKLIST_LABELS, CloudService, observed, stamp, utcnow
 from app.cloud.settings import Settings
 from app.cloud.store import ConflictError, get_store
 from app.cloud.watchdog import (AlarmAck, AlarmResolved, DoorsOpen, FridgeTamper,
@@ -91,6 +94,10 @@ class ChecklistIn(ActorIn):
     done: bool
 
 
+class PublicChecklistIn(Payload):
+    done: bool = Field(strict=True)
+
+
 class PowerIn(Payload):
     location_id: str
     on: bool
@@ -131,10 +138,42 @@ def _public_device(device):
     return {key: value for key, value in device.items() if key in DEVICE_FIELDS}
 
 
+def public_alert(record):
+    result = public(record)
+    for item in result.get("checklist", []):
+        if item.get("id") in CHECKLIST_LABELS:
+            item["label"] = CHECKLIST_LABELS[item["id"]]
+    return result
+
+
 def create_app(store=None, media=None) -> FastAPI:
     application = FastAPI(title="ColdChain Cloud API", version="1.0.0")
     application.state.store = store if store is not None else LazyStore()
     application.state.media = media
+    public_clients = OrderedDict()
+    public_clients_lock = Lock()
+
+    @application.middleware("http")
+    async def bound_public_checklist(request: Request, call_next):
+        if (request.method == "PATCH" and request.url.path.startswith("/api/alerts/")
+                and "/public-checklist/" in request.url.path):
+            now = monotonic()
+            client = request.client.host if request.client else "unknown"
+            with public_clients_lock:
+                while public_clients and next(iter(public_clients.values()))[0] <= now - 60:
+                    public_clients.popitem(last=False)
+                window, count = public_clients.get(client, (now, 0))
+                if count >= 30 or (client not in public_clients and len(public_clients) >= 4096):
+                    return JSONResponse(status_code=429, content={"detail": "Public checklist rate limit exceeded"},
+                                        headers={"Retry-After": "60"})
+                public_clients[client] = (window, count + 1)
+            body = bytearray()
+            async for chunk in request.stream():
+                if len(body) + len(chunk) > 128:
+                    return JSONResponse(status_code=413, content={"detail": "Public checklist body exceeds 128 bytes"})
+                body.extend(chunk)
+            request._body = bytes(body)
+        return await call_next(request)
 
     def service() -> CloudService:
         return CloudService(application.state.store)
@@ -170,7 +209,7 @@ def create_app(store=None, media=None) -> FastAPI:
 
     @application.get("/api/devices")
     def devices():
-        return [_public_device(device) for device in service().state()["devices"].values()]
+        return [_public_device(device) for device in service().state()["devices"].values() if device.get("active", True)]
 
     @application.get("/api/devices/{device_id}/config")
     def config(device_id: str, request: Request):
@@ -283,14 +322,22 @@ def create_app(store=None, media=None) -> FastAPI:
     @application.get("/api/alerts")
     def alerts(status: str | None = None):
         rows = [a for a in service().state()["alerts"].values() if status is None or a["status"] == status]
-        return public(sorted(rows, key=lambda row: row["created_at"], reverse=True))
+        return [public_alert(row) for row in sorted(rows, key=lambda row: row["created_at"], reverse=True)]
 
     @application.get("/api/alerts/{alert_id}")
     def alert(alert_id: str):
         record = service().state()["alerts"].get(alert_id)
         if record is None:
             raise HTTPException(404, "Alert not found")
-        return public(record)
+        return public_alert(record)
+
+    @application.patch("/api/alerts/{alert_id}/public-checklist/{item_id}")
+    def update_public_checklist(
+        alert_id: Annotated[str, Path(min_length=1, max_length=128, pattern=r"^[0-9]+$")],
+        item_id: Literal["inspect", "protect", "verify"],
+        body: PublicChecklistIn,
+    ):
+        return public_alert(service().public_checklist(alert_id, item_id, body.done))
 
     @application.post("/api/alerts/{alert_id}/ack", dependencies=[Depends(require_operator)])
     def acknowledge(alert_id: str, body: ActorIn):

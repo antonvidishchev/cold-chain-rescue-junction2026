@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 
-export function usePoll<T>(key: string, load: (signal: AbortSignal) => Promise<T>, intervalMs = 20_000) {
+export function usePoll<T>(key: string, load: (signal: AbortSignal) => Promise<T>, intervalMs = 5_000) {
   const loader = useRef(load);
   useEffect(() => { loader.current = load; }, [load]);
   const [revision, refresh] = useState(0);

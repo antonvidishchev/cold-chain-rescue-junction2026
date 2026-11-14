@@ -270,7 +270,7 @@ def test_nonfinite_json_numbers_rejected(cloud, event, field, value):
 
 def test_normalized_timestamp_hash_and_stale_telemetry(cloud):
     client, store = cloud
-    body = envelope("telemetry")
+    body = envelope("telemetry", data={"temp_c": 4.5, "humidity": 44.2, "alarm": None})
     assert post(client, "telemetry", body).status_code == 200
     body["ts"] = body["ts"].replace("+00:00", "Z")
     assert post(client, "telemetry", body).json()["duplicate"] is True
@@ -415,6 +415,34 @@ def test_resolve_must_name_something(cloud):
     assert post(client, 'alarm_resolved', envelope('alarm_resolved', data=data)).status_code == 422
 
 
+@pytest.mark.parametrize("event,kind", [("fridge_tamper", "TAMPER"), ("power_outage", "POWER_LOSS")])
+def test_watchdog_user_resolved_incidents_are_immutable_and_new_reports_create_incident(cloud, event, kind):
+    client, store = cloud
+    assert post(client, event).status_code == 200
+    identifier = next(a["id"] for a in client.get("/api/alerts").json() if a["type"] == kind)
+    for item_id in ("inspect", "protect", "verify"):
+        assert client.patch(f"/api/alerts/{identifier}/public-checklist/{item_id}", json={"done": True}).status_code == 200
+    old = store.get("Alerts", str(identifier))
+    alarm_kind = "fridge_tamper" if kind == "TAMPER" else "power_outage"
+    for action in ("alarm_acknowledged", "alarm_resolved"):
+        data = {**DATA[action], "alarm_kind": alarm_kind}
+        assert post(client, action, envelope(action, data=data)).json()["alarm_state"] == "NORMAL"
+        assert store.get("Alerts", str(identifier)) == old
+    if kind == "POWER_LOSS":
+        data = {**DATA[event], "protocol": "P4"}
+    else:
+        data = {**DATA[event], "fridge_power_w": 100.0}
+    assert post(client, event, envelope(event, data=data)).json()["alarm_state"] == kind
+    active = [a for a in store.list("Alerts") if a["type"] == kind and a["status"] == "open"]
+    assert len(active) == 1 and active[0]["id"] != identifier
+    if kind == "POWER_LOSS":
+        assert active[0]["device_reported_protocol"] == "P4"
+    else:
+        assert active[0]["device_reported_assessment"]["fridge_power_w"] == 100.0
+    assert store.get("Alerts", str(identifier)) == old
+    assert old["recovered_at"] is None
+
+
 def test_transferred_inventory_remains_device_report(cloud):
     client, store = cloud
     before = store.list('StockItems')
@@ -432,3 +460,23 @@ def test_inconsistent_tamper_report_rejected(cloud):
     body=envelope('fridge_tamper')
     body['data']['mismatch_c']=6.0
     assert post(client,'fridge_tamper',body).status_code==422
+
+def test_unfreeze_report_creates_visible_incident_and_knob_resolves_it(cloud):
+    client, store = cloud
+    report = envelope('unfreeze_check_required')
+    assert post(client, 'unfreeze_check_required', report).status_code == 200
+    assert post(client, 'unfreeze_check_required', report).json()['duplicate']
+    alert = next(a for a in client.get('/api/alerts').json() if a['type']=='UNFREEZE_CHECK')
+    location=next(c for c in client.get('/api/clinics').json() if c['id']=='fridge-a')
+    assert location['display_status']=='UNFREEZE_CHECK'
+    assert len([a for a in store.list('Alerts') if a['type']=='UNFREEZE_CHECK'])==1
+    done=envelope('alarm_resolved',data={'alarm_kind':'unfreeze','code':None,'acknowledged_at':None,'resolved_by':'knob'})
+    assert post(client,'alarm_resolved',done).status_code==200
+    assert client.get(f"/api/alerts/{alert['id']}").json()['status']=='resolved'
+    assert next(c for c in client.get('/api/clinics').json() if c['id']=='fridge-a')['display_status']=='NORMAL'
+
+
+def test_unfreeze_telemetry_creates_incident_if_notification_was_lost(cloud):
+    client, _ = cloud
+    assert post(client,'telemetry',envelope('telemetry',data={'temp_c':5.5,'alarm':'unfreeze'})).status_code==200
+    assert any(a['type']=='UNFREEZE_CHECK' for a in client.get('/api/alerts').json())

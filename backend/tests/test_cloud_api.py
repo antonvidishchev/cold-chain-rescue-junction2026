@@ -160,6 +160,198 @@ def test_bad_telemetry_rejected(cloud, extra):
     assert response.status_code == 422
 
 
+def public_incident(client):
+    reading(client, 9, 10)
+    reading(client, 10, 5)
+    return client.get("/api/alerts").json()[0]
+
+
+def public_mark(client, identifier, item_id, done=True):
+    return client.patch(f"/api/alerts/{identifier}/public-checklist/{item_id}", json={"done": done})
+
+
+def test_public_checklist_partial_completion_idempotence_and_isolation(cloud):
+    client, store, _ = cloud
+    incident = public_incident(client)
+    identifier = incident["id"]
+    unchanged = {kind: store.list(kind) for kind in
+                 ("Devices", "Products", "Stock", "Readings", "Events", "DeviceInventory", "Transfers", "Commands", "Notifications")}
+    location = store.get("Locations", "fridge-a")
+    for count, item_id in enumerate(("inspect", "protect", "verify"), 1):
+        response = public_mark(client, identifier, item_id)
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert sum(item["done"] for item in result["checklist"]) == count
+        assert result["status"] == ("resolved_by_user" if count == 3 else "open")
+        assert result["recovered_at"] is None
+        audit = store.list("Timeline")
+        assert public_mark(client, identifier, item_id).json() == result
+        assert store.list("Timeline") == audit
+    assert result["resolution_source"] == "public_checklist"
+    assert result["user_resolved_by"] == "public user"
+    assert result["user_resolved_at"].endswith("+00:00")
+    assert result == client.get(f"/api/alerts/{identifier}").json()
+    assert client.get("/api/alerts?status=resolved_by_user").json() == [result]
+    assert [item["label"] for item in result["checklist"]] == [
+        "Unit is inspected", "Incident acted upon. Stock transferred to another unit or location", "Recovery verified"]
+    audit = client.get(f"/api/alerts/{identifier}/timeline").json()
+    assert [row["type"] for row in audit].count("public_checklist") == 3
+    assert [row["type"] for row in audit].count("resolved_by_user") == 1
+    assert public_mark(client, identifier, "inspect", False).status_code == 409
+    assert unchanged == {kind: store.list(kind) for kind in unchanged}
+    assert store.get("Locations", "fridge-a") == {**location, "alarm_state": "NORMAL"}
+    assert client.post(f"/api/alerts/{identifier}/ack", headers=OH, json={"by": "Operator"}).status_code == 409
+    assert client.post(f"/api/alerts/{identifier}/resolve", headers=OH).status_code == 409
+    assert client.patch(f"/api/alerts/{identifier}/checklist/inspect", headers=OH,
+                        json={"by": "Operator", "done": False}).status_code == 409
+    assert client.get(f"/api/alerts/{identifier}/timeline").json() == audit
+
+
+def test_public_checklist_undo_before_completion_and_legacy_labels(cloud):
+    client, store, _ = cloud
+    identifier = public_incident(client)["id"]
+    original = store.get("Alerts", str(identifier))
+    original["checklist"][0]["label"] = "Old inspection label"
+    original["metadata"] = {"device_key": "DO-NOT-EXPOSE", "nested": {"operator_key": "DO-NOT-EXPOSE"}}
+    store.put("Alerts", str(identifier), original)
+    for response in (client.get("/api/alerts"), client.get(f"/api/alerts/{identifier}"),
+                     client.get(f"/api/alerts/{identifier}/checklist"), public_mark(client, identifier, "inspect")):
+        assert "Old inspection label" not in response.text
+        assert "Unit is inspected" in response.text
+        assert "DO-NOT-EXPOSE" not in response.text
+    assert store.get("Alerts", str(identifier))["checklist"][0]["label"] == "Old inspection label"
+    undone = public_mark(client, identifier, "inspect", False).json()
+    assert undone["checklist"][0]["done"] is False
+    assert undone["status"] == "open"
+    assert "user_resolved_at" not in undone
+
+
+@pytest.mark.parametrize("item_id,payload", [
+    ("unknown", {"done": True}), ("inspect" * 30, {"done": True}),
+    ("inspect", {}), ("inspect", {"done": "true"}), ("inspect", {"done": 1}),
+    ("inspect", {"done": None}), ("inspect", {"done": True, "by": "Arbitrary"}),
+    ("inspect", {"done": True, "status": "resolved"}),
+])
+def test_public_checklist_strict_validation_no_mutations(cloud, item_id, payload):
+    client, store, _ = cloud
+    identifier = public_incident(client)["id"]
+    before = {kind: store.list(kind) for kind in ("Alerts", "Timeline", "Locations")}
+    response = client.patch(f"/api/alerts/{identifier}/public-checklist/{item_id}", json=payload)
+    assert response.status_code == 422
+    assert before == {kind: store.list(kind) for kind in before}
+
+
+def test_public_checklist_bounds_rate_limit_and_other_writes_protected(cloud, monkeypatch):
+    client, store, _ = cloud
+    identifier = public_incident(client)["id"]
+    url = f"/api/alerts/{identifier}/public-checklist/inspect"
+    assert client.patch(url, content=b" " * 129).status_code == 413
+    for bad_id in ("x", "1" * 129):
+        assert public_mark(client, bad_id, "inspect").status_code == 422
+    assert public_mark(client, "99999", "inspect").status_code == 404
+    assert client.post(url, json={"done": True}).status_code == 405
+    for path, payload in ((f"/api/alerts/{identifier}/checklist/inspect", {"by": "Operator", "done": True}),
+                          (f"/api/alerts/{identifier}/resolve", {}),
+                          ("/api/sim/power", {"location_id": "fridge-a", "on": True}),
+                          ("/api/telemetry/temperature", {"device_id": DEVICE, "temp_c": 4})):
+        response = client.patch(path, json=payload) if "/checklist/" in path else client.post(path, json=payload)
+        assert response.status_code == 401
+    import app.cloud.api as api
+    now = api.monotonic()
+    monkeypatch.setattr(api, "monotonic", lambda: now + 61)
+    for _ in range(30):
+        assert public_mark(client, identifier, "inspect").status_code == 200
+    before = store.list("Timeline")
+    limited = public_mark(client, identifier, "inspect")
+    assert limited.status_code == 429 and limited.headers["Retry-After"] == "60"
+    assert store.list("Timeline") == before
+    monkeypatch.setattr(api, "monotonic", lambda: now + 122)
+    assert public_mark(client, identifier, "inspect").status_code == 200
+
+
+def test_public_completion_new_adverse_reading_never_recovers_old_incident(cloud):
+    client, store, _ = cloud
+    identifier = public_incident(client)["id"]
+    for item_id in ("inspect", "protect", "verify"):
+        assert public_mark(client, identifier, item_id).status_code == 200
+    old = store.get("Alerts", str(identifier))
+    reading(client, 11)
+    alerts = client.get("/api/alerts").json()
+    assert len(alerts) == 2
+    new = next(row for row in alerts if row["id"] != identifier)
+    assert new["status"] == "open" and new["type"] == old["type"]
+    assert all(not item["done"] for item in new["checklist"])
+    assert store.get("Alerts", str(identifier)) == old
+    assert store.get("Locations", "fridge-a")["alarm_state"] == "EXCURSION"
+    reading(client, 4)
+    assert store.get("Alerts", str(new["id"]))["recovered_at"]
+    assert store.get("Alerts", str(identifier)) == old
+
+
+def test_public_checklist_concurrent_completion_retries_transaction_atomically(cloud, monkeypatch):
+    client, store, _ = cloud
+    identifier = public_incident(client)["id"]
+    original = store.transaction
+    conflicts = []
+    def transaction(changes):
+        if not conflicts:
+            from app.cloud.store import ConflictError
+            conflicts.append(True)
+            raise ConflictError("Injected concurrent revision")
+        return original(changes)
+    monkeypatch.setattr(store, "transaction", transaction)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        responses = list(executor.map(lambda item: public_mark(client, identifier, item), ("inspect", "protect", "verify")))
+    assert all(response.status_code == 200 for response in responses)
+    assert conflicts
+    alert = client.get(f"/api/alerts/{identifier}").json()
+    assert alert["status"] == "resolved_by_user"
+    audit = client.get(f"/api/alerts/{identifier}/timeline").json()
+    assert len([row for row in audit if row["type"] == "public_checklist"]) == 3
+    assert len([row for row in audit if row["type"] == "resolved_by_user"]) == 1
+    assert alert["recovered_at"] is None
+
+
+def test_public_completion_offline_heartbeat_does_not_modify_closed_incident(cloud):
+    client, store, _ = cloud
+    device = store.get("Devices", DEVICE)
+    device["last_seen"] = stamp(utcnow() - timedelta(seconds=91))
+    store.put("Devices", DEVICE, device)
+    check_offline(store)
+    identifier = next(a["id"] for a in client.get("/api/alerts").json() if a["type"] == "OFFLINE")
+    for item_id in ("inspect", "protect", "verify"):
+        assert public_mark(client, identifier, item_id).status_code == 200
+    old = store.get("Alerts", str(identifier))
+    check_offline(store)
+    new = next(a for a in store.list("Alerts") if a["type"] == "OFFLINE" and a["status"] == "open")
+    assert new["id"] != identifier
+    assert client.post(f"/api/devices/{DEVICE}/heartbeat", headers=DH).status_code == 200
+    assert store.get("Alerts", str(new["id"]))["recovered_at"]
+    assert store.get("Alerts", str(identifier)) == old
+
+
+def test_operator_resolved_incident_rejects_public_checklist(cloud):
+    client, store, _ = cloud
+    identifier = public_incident(client)["id"]
+    reading(client, 4)
+    assert client.post(f"/api/alerts/{identifier}/resolve", headers=OH).json()["status"] == "resolved"
+    before = store.get("Alerts", str(identifier))
+    audit = store.list("Timeline")
+    assert public_mark(client, identifier, "inspect").status_code == 409
+    assert store.get("Alerts", str(identifier)) == before
+    assert store.list("Timeline") == audit
+
+
+def test_public_completion_preserves_already_observed_recovery(cloud):
+    client, _, _ = cloud
+    identifier = public_incident(client)["id"]
+    reading(client, 4)
+    recovered = client.get(f"/api/alerts/{identifier}").json()["recovered_at"]
+    for item_id in ("inspect", "protect", "verify"):
+        result = public_mark(client, identifier, item_id).json()
+    assert result["status"] == "resolved_by_user" and result["recovered_at"] == recovered
+
+
 def test_incident_rules_acknowledgement_recovery_and_checklist(cloud):
     client, store, _ = cloud
     assert reading(client, 9, 10).status_code == 200

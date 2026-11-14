@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { dateTime, getDeviceInventory, getList, temperature, words, type Clinic, type Incident, type WatchdogEvent } from './api';
 import { usePoll } from './usePoll';
 
@@ -13,6 +14,8 @@ function EventDetail({ event }: { event: WatchdogEvent }) {
   const data = event.data || {};
   const kind = event.event || event.event_type;
   return <>
+    {kind === 'telemetry' && <p>Temperature: {temperature(data.temp_c)} C · Device alarm: {data.alarm ? words(data.alarm) : 'None reported'}</p>}
+    {kind === 'unfreeze_check_required' && <p>Unfreeze requested with stock present. Operator inspection required.</p>}
     {data.code != null && <p>Code {data.code}</p>}
     {kind === 'fridge_tamper' && <>
       <p>Fridge display mismatch · device report, not verified</p>
@@ -37,21 +40,31 @@ function EventDetail({ event }: { event: WatchdogEvent }) {
   </>;
 }
 
-export function WatchdogEvents({ clinic }: { clinic: Clinic }) {
-  const events = usePoll(`events:${clinic.id}`, signal => getList<WatchdogEvent>(`/events?location_id=${encodeURIComponent(clinic.id)}&limit=50`, signal), 5_000);
-  return <section className="panel watchdog-panel" aria-labelledby="watchdog-heading">
-    <div className="section-top"><h2 id="watchdog-heading">Device event reports</h2><span className="badge neutral">READ ONLY</span></div>
-    <p className="muted">Latest 50 clinic events. Device reports are not independent recovery or clinical evidence. Late reports do not update current state.</p>
+export function WatchdogEvents({ clinic, embedded = false, incidents = [], renderIncident }: { clinic: Clinic; embedded?: boolean; incidents?: Incident[]; renderIncident?: (incident: Incident) => ReactNode }) {
+  const events = usePoll(`events:${clinic.id}`, signal => getList<WatchdogEvent>(`/events?location_id=${encodeURIComponent(clinic.id)}&limit=50`, signal));
+  return <section className={embedded ? 'watchdog-panel live-events' : 'panel watchdog-panel'} aria-labelledby="watchdog-heading">
+    <div className="section-top"><h2 id="watchdog-heading">Latest device events</h2><span className="badge neutral">READ ONLY</span></div>
+    <p className="muted">Newest received reports first · checked every 5 seconds. Device reports are not independent recovery or clinical evidence.</p>
+    <small className="muted">Feed refreshed {dateTime(events.updated)} · {events.data?.length ?? 0} recent reports</small>
     {events.loading && <p role="status">Loading device events…</p>}
     {events.error && <p className="error" role="alert">{events.error} Last available events may be outdated.</p>}
     {events.data?.length === 0 && <p className="empty">No device events recorded for this clinic.</p>}
-    <ol className="watchdog-events">{events.data?.map(event => <li key={event.id}>
-      <article><h3>{words(event.event || event.event_type || 'device event')}</h3>
-        <p className="muted">{event.device_id || 'Unknown device'} · {dateTime(event.ts)}</p>
-        {event.result?.stale && <p className="badge warning">Late report · not current state</p>}
-        <EventDetail event={event} />
-      </article>
-    </li>)}</ol>
+    <ol className="watchdog-events">{events.data?.map(event => {
+      const kind = event.event || event.event_type || 'device event';
+      const alarm = kind === 'telemetry' ? event.data?.alarm : (kind === 'alarm_acknowledged' || kind === 'alarm_resolved') ? event.data?.alarm_kind : kind;
+      const incidentType = ({ power_outage: 'POWER_LOSS', fridge_tamper: 'TAMPER', unfreeze: 'UNFREEZE_CHECK', unfreeze_check_required: 'UNFREEZE_CHECK', doors_open: 'DOORS_OPEN' } as Record<string, string>)[alarm || ''];
+      const matching = incidents.filter(incident => incident.type === incidentType && Date.parse(incident.created_at) <= Date.parse(event.ts || '') + 5000)
+        .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+      const incident = event.result?.stale ? undefined : matching[0];
+      const resolved = kind === 'alarm_resolved' || incident?.status === 'resolved' || incident?.status === 'resolved_by_user';
+      const acknowledged = kind === 'alarm_acknowledged' || incident?.status === 'acknowledged';
+      const status = event.result?.stale ? 'Late report' : resolved ? incident?.status === 'resolved_by_user' ? 'Resolved by user' : 'Resolved' : acknowledged ? 'Acknowledged' : incidentType ? 'Active' : kind === 'telemetry' && !alarm ? 'No alarm' : 'Received';
+      const tone = event.result?.stale || acknowledged ? 'warning' : resolved || status === 'No alarm' ? 'good' : incidentType ? 'danger' : 'neutral';
+      return <li key={event.id}><details className={`event-card event-${tone}`}>
+        <summary><span><strong>{words(kind)}</strong><small>{event.device_id || 'Unknown device'} · {dateTime(event.ts)}</small></span><span className={`badge ${tone}`}>{status}</span></summary>
+        <div className="event-body"><EventDetail event={event} />{event.result?.stale && <p className="notice">Late report · not current state</p>}{incident && renderIncident ? renderIncident(incident) : incidentType && <p className="muted">No matching incident checklist is available for this report.</p>}</div>
+      </details></li>;
+    })}</ol>
   </section>;
 }
 

@@ -23,7 +23,11 @@ def main() -> None:
     store = get_store()
     store.initialize()
     initialize_media()
-    print(json.dumps(bootstrap_demo(store)))
+    result = bootstrap_demo(store)
+    if result['created']:
+        from app.cloud.migrate_clinics import migrate_clinics
+        result['catalogue'] = migrate_clinics(store, apply=True)
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":

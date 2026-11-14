@@ -1,8 +1,9 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
-import App from './App';
-import { connectivity, measurement, normalizeBase, request, type Clinic } from './api';
+import App, { IncidentCard } from './App';
+import { catalogueClinics } from './clinic-fixtures';
+import { connectivity, measurement, normalizeBase, request, type Clinic, type Incident } from './api';
 vi.mock('./ClinicMap', () => ({ default: () => <div aria-label="Map stub" /> }));
 const now = new Date().toISOString();
 const clinic = (id: string, city: string, temp: number | null = null): Clinic => ({ id, city, clinic_id: city.toLowerCase(), name: `${city} Demo Clinic (fictional)`, synthetic: true, last_temp_c: temp, last_reading_at: temp == null ? null : now, alarm_state: 'NORMAL', power_on: true, effective_range: { min_c: 2, max_c: 8 }, devices: [{ id: `unoq-${id}`, last_seen: now, status: 'nominal' }], used_units: 0, free_units: 10 });
@@ -18,12 +19,36 @@ function mockApi(extra?: (url: URL) => Promise<Response> | undefined) {
   });
 }
 describe('public dashboard', () => {
+  it('shows the catalogue main site and ten unmonitored partners without false device states', async () => {
+    const fetcher = mockApi(url => url.pathname.endsWith('/clinics') ? Promise.resolve(json([
+      ...catalogueClinics.slice(1), catalogueClinics[0], { ...clinics[1], active: false },
+    ])) : undefined);
+    vi.stubGlobal('fetch', fetcher);
+    render(<App />);
+    expect(await screen.findByRole('heading', { name: /Espoonlahti Clinic.*Main monitored site/ })).toBeInTheDocument();
+    const list = screen.getByLabelText('Choose a clinic');
+    expect(within(list).getAllByRole('button')).toHaveLength(11);
+    for (const site of catalogueClinics.slice(1)) {
+      const row = within(list).getByRole('button', { name: new RegExp(site.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) });
+      expect(row).toHaveTextContent('Not monitored / estimated capacity');
+      expect(row).not.toHaveTextContent(/Offline|Awaiting device|No active incident|In range|°C reading/);
+      await userEvent.click(row);
+      expect(screen.getByRole('heading', { name: new RegExp(site.id) })).toBeInTheDocument();
+      expect(screen.queryByText('Sensor temperature')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Reported on|Waiting for the first temperature/)).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Latest device events' })).not.toBeInTheDocument();
+    }
+    expect(screen.getByText('172 km')).toBeInTheDocument();
+    expect(screen.getByText('120 min')).toBeInTheDocument();
+    expect(fetcher.mock.calls.some(([url]) => /location_id=(?!fridge-a)/.test(String(url)))).toBe(false);
+    expect(fetcher.mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true);
+  });
   it('selects live clinics, never substitutes temperatures or makes operator calls', async () => {
     const fetcher = mockApi(); vi.stubGlobal('fetch', fetcher);
     render(<App />);
-    expect(await screen.findByRole('heading', { name: /Helsinki\s*Fictional clinic/ })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Helsinki Demo Clinic.*Monitored site/ })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /^Espoo/ }));
-    expect(await screen.findByRole('heading', { name: /Espoo\s*Fictional clinic/ })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Espoo Demo Clinic.*Monitored site/ })).toBeInTheDocument();
     await waitFor(() => expect(fetcher.mock.calls.some(([url]) => String(url).includes('location_id=fridge-b'))).toBe(true));
     expect(screen.getByText(/No public synthetic images/)).toBeInTheDocument();
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
@@ -46,12 +71,12 @@ describe('public dashboard', () => {
     const fetcher = mockApi(url => url.pathname.endsWith('/readings') && url.searchParams.get('location_id') === 'fridge-a' ? new Promise(resolve => { resolveOld = resolve; }) : undefined);
     vi.stubGlobal('fetch', (url: string, options?: RequestInit) => { if (url.includes('/readings?location_id=fridge-a')) oldSignal = options?.signal; return fetcher(url, options); });
     window.history.replaceState(null, '', '/'); render(<App />);
-    await screen.findByRole('heading', { name: /Helsinki\s*Fictional clinic/ });
+    await screen.findByRole('heading', { name: /Helsinki Demo Clinic.*Monitored site/ });
     await waitFor(() => expect(resolveOld).toBeDefined());
     await userEvent.click(screen.getByRole('button', { name: /^Espoo/ }));
     expect(oldSignal?.aborted).toBe(true);
     await act(async () => resolveOld(json([{ id: 991, ts: now, temp_c: 99, stale: false, alarm_active: true }])));
-    expect(screen.getByRole('heading', { name: /Espoo\s*Fictional clinic/ })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Espoo Demo Clinic.*Monitored site/ })).toBeInTheDocument();
     expect(screen.queryByRole('img', { name: /99 degrees/ })).not.toBeInTheDocument();
   });
   it('renders watchdog mismatch, nullable codes and knob completion without claiming recovery', async () => {
@@ -68,7 +93,7 @@ describe('public dashboard', () => {
       return undefined;
     });
     vi.stubGlobal('fetch', fetcher); render(<App />);
-    const events = await screen.findByRole('region', { name: 'Device event reports' });
+    const events = await screen.findByRole('region', { name: 'Latest device events' });
     expect(await within(events).findByText('Reported mismatch')).toBeInTheDocument();
     expect(within(events).getByText('5.0° C')).toBeInTheDocument();
     expect(within(events).getAllByText('Code H1')).toHaveLength(2);
@@ -148,7 +173,86 @@ describe('public dashboard', () => {
     expect(await screen.findByText('<script>alert(1)</script>')).toBeInTheDocument();
     expect(screen.queryByText('PRIVATE DATA')).not.toBeInTheDocument();
     expect(document.querySelector('.photo-description script')).toBeNull();
-    expect(screen.getByRole('img', { name: /Synthetic demonstration/ })).toHaveAttribute('src', expect.stringContaining('/images/public/content'));
+    expect(screen.getByRole('img', { name: /Synthetic camera/ })).toHaveAttribute('src', expect.stringContaining('/images/public/content'));
+  });
+});
+const publicIncident = (): Incident => ({
+  id: 101, location_id: 'fridge-a', type: 'POWER_LOSS', message: 'Power interrupted', status: 'open',
+  created_at: now, recovered_at: null, protocol: null, user_resolved_at: null, resolution_source: null,
+  checklist: ['inspect', 'protect', 'verify'].map(id => ({ id, label: `Legacy ${id} label`, done: false })),
+});
+describe('public incident checklist', () => {
+  it('sends only public endpoint patches and resolves only on the third persisted confirmation', async () => {
+    let stored = publicIncident();
+    const fetcher = vi.fn((input: string, options?: RequestInit) => {
+      const id = new URL(input).pathname.split('/').at(-1);
+      stored = { ...stored, checklist: stored.checklist.map(item => item.id === id ? { ...item, done: JSON.parse(String(options?.body)).done } : item) };
+      if (stored.checklist.every(item => item.done)) stored = { ...stored, status: 'resolved_by_user', user_resolved_at: now, resolution_source: 'public_checklist' };
+      return Promise.resolve(json(stored));
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const onSaved = vi.fn();
+    render(<IncidentCard incident={publicIncident()} timeline={[]} onSaved={onSaved} />);
+    expect(screen.queryByText(/Legacy/)).not.toBeInTheDocument();
+    for (const label of ['Unit is inspected', 'Incident acted upon. Stock transferred to another unit or location', 'Recovery verified']) {
+      await userEvent.click(screen.getByRole('checkbox', { name: label }));
+      await waitFor(() => expect(screen.getByRole('checkbox', { name: label })).toBeChecked());
+      if (label !== 'Recovery verified') expect(screen.queryByText('Resolved by user', { exact: true })).not.toBeInTheDocument();
+    }
+    expect(screen.getByText('Resolved by user', { exact: true })).toHaveClass('neutral');
+    expect(screen.getByText('User confirmation; does not change measured temperature, power or inventory')).toBeInTheDocument();
+    expect(screen.queryByText(/Recovery observed|sensor recovery/i)).not.toBeInTheDocument();
+    for (const checkbox of screen.getAllByRole('checkbox')) expect(checkbox).toBeDisabled();
+    expect(onSaved).toHaveBeenCalledTimes(3);
+    expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['inspect', 'protect', 'verify'].map(id => `/api/alerts/101/public-checklist/${id}`));
+    for (const [, options] of fetcher.mock.calls) {
+      expect(options).toMatchObject({ method: 'PATCH', credentials: 'omit', headers: { 'Content-Type': 'application/json' }, body: '{"done":true}' });
+      expect(options?.headers).not.toHaveProperty('Authorization');
+    }
+  });
+  it('disables the entire checklist while pending, allows unchecking unresolved items and resists stale polling', async () => {
+    let complete!: (response: Response) => void;
+    const fetcher = vi.fn().mockImplementationOnce(() => new Promise<Response>(resolve => { complete = resolve; })).mockResolvedValueOnce(json(publicIncident()));
+    vi.stubGlobal('fetch', fetcher);
+    const original = publicIncident();
+    const { rerender } = render(<IncidentCard incident={original} timeline={[]} />);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Unit is inspected' }));
+    for (const checkbox of screen.getAllByRole('checkbox')) expect(checkbox).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: 'Unit is inspected' })).not.toBeChecked();
+    const saved = { ...original, checklist: original.checklist.map(item => ({ ...item, done: item.id === 'inspect' })) };
+    await act(async () => complete(json(saved)));
+    rerender(<IncidentCard incident={{ ...original }} timeline={[]} />);
+    expect(screen.getByRole('checkbox', { name: 'Unit is inspected' })).toBeChecked();
+    rerender(<IncidentCard incident={saved} timeline={[]} />);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Unit is inspected' }));
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: 'Unit is inspected' })).not.toBeChecked());
+    expect(fetcher.mock.calls[1][1].body).toBe('{"done":false}');
+    rerender(<IncidentCard incident={{ ...saved }} timeline={[]} />);
+    expect(screen.getByRole('checkbox', { name: 'Unit is inspected' })).not.toBeChecked();
+    rerender(<IncidentCard incident={publicIncident()} timeline={[]} />);
+    const next = { ...saved, checklist: saved.checklist.map(item => ({ ...item, done: item.id === 'protect' })) };
+    rerender(<IncidentCard incident={next} timeline={[]} />);
+    expect(screen.getByRole('checkbox', { name: 'Incident acted upon. Stock transferred to another unit or location' })).toBeChecked();
+  });
+  it('does not falsely resolve or persist failed final confirmation and supports retry', async () => {
+    const incident = publicIncident();
+    incident.checklist[0].done = incident.checklist[1].done = true;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('private diagnostics', { status: 503 })));
+    render(<IncidentCard incident={incident} timeline={[]} />);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Recovery verified' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('503');
+    expect(screen.getByRole('alert')).not.toHaveTextContent('private diagnostics');
+    expect(screen.getByRole('checkbox', { name: 'Recovery verified' })).not.toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Recovery verified' })).toBeEnabled();
+    expect(screen.queryByText('Resolved by user', { exact: true })).not.toBeInTheDocument();
+  });
+  it.each(['resolved_by_user', 'resolved'])('renders resolved history %s without warning colors or editable controls', status => {
+    render(<IncidentCard incident={{ ...publicIncident(), status, recovered_at: status === 'resolved_by_user' ? now : null }} timeline={[]} />);
+    for (const checkbox of screen.getAllByRole('checkbox')) expect(checkbox).toBeDisabled();
+    expect(document.querySelector('.incident-symbol')).toHaveClass('recovered');
+    expect(document.querySelector('.incident-card .badge')).toHaveClass('neutral');
+    expect(screen.queryByText(/Recovery observed/)).not.toBeInTheDocument();
+    if (status === 'resolved_by_user') expect(screen.getByText(/Resolved by user/, { selector: 'p' })).toHaveTextContent('Not observed');
   });
 });
 describe('contract safeguards', () => {

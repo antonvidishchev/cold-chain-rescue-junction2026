@@ -62,6 +62,12 @@ hosting also does not enforce host-level keys by default.
   and `x-functions-key` matching the configured device key and device function key.
 - Operator writes require `x-functions-key` matching `COLDCHAIN_OPERATOR_KEY`.
   A device credential cannot approve a transfer or change simulator state.
+- The sole anonymous incident mutation is PATCH
+  `/api/alerts/{id}/public-checklist/{inspect|protect|verify}` with strict `{done:boolean}`.
+  All three checked atomically records `resolved_by_user` and UTC `user_resolved_at`,
+  not sensor recovery or an inventory transfer. Completed incidents cannot be reopened.
+  This route is locally limited to 30 requests/minute/client IP/process; anonymous
+  false attestations and distributed abuse remain risks. See `CLOUD_API.md`.
 - Browser-push opt-in is public but grants no operator access.
 - Keep Blob Storage private; only validated image IDs are served by the public
   image API. Public image content is still public data, despite private storage.
