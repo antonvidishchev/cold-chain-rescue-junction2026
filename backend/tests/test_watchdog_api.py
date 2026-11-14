@@ -270,7 +270,7 @@ def test_nonfinite_json_numbers_rejected(cloud, event, field, value):
 
 def test_normalized_timestamp_hash_and_stale_telemetry(cloud):
     client, store = cloud
-    body = envelope("telemetry")
+    body = envelope("telemetry", data={"temp_c": 4.5, "humidity": 44.2, "alarm": None})
     assert post(client, "telemetry", body).status_code == 200
     body["ts"] = body["ts"].replace("+00:00", "Z")
     assert post(client, "telemetry", body).json()["duplicate"] is True
@@ -460,3 +460,23 @@ def test_inconsistent_tamper_report_rejected(cloud):
     body=envelope('fridge_tamper')
     body['data']['mismatch_c']=6.0
     assert post(client,'fridge_tamper',body).status_code==422
+
+def test_unfreeze_report_creates_visible_incident_and_knob_resolves_it(cloud):
+    client, store = cloud
+    report = envelope('unfreeze_check_required')
+    assert post(client, 'unfreeze_check_required', report).status_code == 200
+    assert post(client, 'unfreeze_check_required', report).json()['duplicate']
+    alert = next(a for a in client.get('/api/alerts').json() if a['type']=='UNFREEZE_CHECK')
+    location=next(c for c in client.get('/api/clinics').json() if c['id']=='fridge-a')
+    assert location['display_status']=='UNFREEZE_CHECK'
+    assert len([a for a in store.list('Alerts') if a['type']=='UNFREEZE_CHECK'])==1
+    done=envelope('alarm_resolved',data={'alarm_kind':'unfreeze','code':None,'acknowledged_at':None,'resolved_by':'knob'})
+    assert post(client,'alarm_resolved',done).status_code==200
+    assert client.get(f"/api/alerts/{alert['id']}").json()['status']=='resolved'
+    assert next(c for c in client.get('/api/clinics').json() if c['id']=='fridge-a')['display_status']=='NORMAL'
+
+
+def test_unfreeze_telemetry_creates_incident_if_notification_was_lost(cloud):
+    client, _ = cloud
+    assert post(client,'telemetry',envelope('telemetry',data={'temp_c':5.5,'alarm':'unfreeze'})).status_code==200
+    assert any(a['type']=='UNFREEZE_CHECK' for a in client.get('/api/alerts').json())

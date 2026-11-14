@@ -43,6 +43,15 @@ This creates the Table and parent-provided media resources, then calls `bootstra
 
 Seeds are fictional Helsinki (`fridge-a`), Espoo (`fridge-b`), Tampere (`clinic-c`), Vantaa (`clinic-vantaa`), Oulu (`clinic-oulu`). Device IDs are `unoq-fridge-a`, `unoq-fridge-b`, `unoq-clinic-c`, `unoq-clinic-vantaa`, `unoq-clinic-oulu`; clinic IDs are lowercase city names. Old location/device IDs and four product IDs remain usable. `clinic-c` has a 2–5°C configured range so the legacy PCR stock can be relocated. Four stock lots start at `fridge-a`, one at `fridge-b`.
 
+## Clinic display status
+
+Clinic responses include `display_status` and `display_status_at`, derived from the
+latest accepted device alarm/resolution/status report or public checklist completion.
+Nested telemetry with `alarm:null` reports no current device alarm. Stale reports and
+inventory updates do not override status. The map uses this display state instead of
+historical unresolved incidents; `alarm_state`, power, measurements and incident
+history remain independently available and are not rewritten by display calculation.
+
 ## Read endpoints
 
 | Method/path | Parameters | Response |
@@ -103,7 +112,7 @@ Envelope `ts` is required and uses the same explicit-UTC/five-minute future tole
 
 Optional `event_id` is device-scoped. When omitted, a stable SHA-256 ID is derived from device ID, event type, and normalized UTC timestamp. Retry the same envelope/timestamp: identical replay returns `duplicate:true`, with no additional incident, timeline, reading or notification; changed data under the same ID returns 409. Persisted journal and changes commit atomically using the existing repository transaction/outbox. Older/equal observations remain auditable (`stale:true`) but do not replace snapshots/status or trigger retrospective incidents/notifications. Non-telemetry watchdog events each add one timeline entry, including stale reports. Duplicate delivery does not refresh last_seen.
 
-`doors_open` creates a `DOORS_OPEN` alert and notification; `unfreeze_check_required` creates a warning notification; `unfreeze_allowed` records a device-reported timeline event, not backend authorization to unfreeze. Power outage uses backend **Case 25** (`POWER_LOSS`, `protocol:25`). Device P1–P4 is retained separately as `device_reported_protocol` and `device_reported_assessment`, with `assessment_source:device_unverified` and `clinical_safety_certified:false`. Device window/clinic suggestions never certify medicines safe and never cause outbound clinic calls or automatic transfers. Operators must independently assess stock and applicable product guidance.
+`doors_open` creates a `DOORS_OPEN` alert and notification; `unfreeze_check_required` creates a deduplicated `UNFREEZE_CHECK` incident and warning notification (also created from fresh nested telemetry reporting `alarm:"unfreeze"`); `unfreeze_allowed` records a device-reported timeline event, not backend authorization to unfreeze. Power outage uses backend **Case 25** (`POWER_LOSS`, `protocol:25`). Device P1–P4 is retained separately as `device_reported_protocol` and `device_reported_assessment`, with `assessment_source:device_unverified` and `clinical_safety_certified:false`. Device window/clinic suggestions never certify medicines safe and never cause outbound clinic calls or automatic transfers. Operators must independently assess stock and applicable product guidance.
 
 Public reads:
 

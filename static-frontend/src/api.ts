@@ -3,6 +3,7 @@ export interface Clinic {
   id: string; clinic_id: string; name: string; city: string; synthetic: boolean;
   last_temp_c: number | null; last_reading_at: string | null; alarm_state: string;
   reported_temp_c?: number | null; reported_temp_at?: string | null;
+  display_status?: string; display_status_at?: string | null;
   power_on: boolean; effective_range: { min_c: number; max_c: number }; devices: Device[];
   used_units: number; free_units: number;
   active?: boolean; monitored?: boolean;
@@ -20,6 +21,7 @@ export interface DeviceInventory {
 export interface WatchdogEvent {
   id: string | number; device_id?: string; location_id?: string; event?: string; event_type?: string; ts?: string;
   data?: {
+    temp_c?: number | null; alarm?: string | null;
     sensor_temp_c?: number | null; fridge_display_temp_c?: number | null; mismatch_c?: number | null;
     fridge_mode?: string; fridge_power_w?: number; stocked_items?: string[];
     alarm_kind?: string | null; code?: string | number | null; doors?: boolean;

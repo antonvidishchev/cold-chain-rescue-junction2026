@@ -251,13 +251,8 @@ def ingest_watchdog(service, body: Envelope) -> dict:
             elif event == "doors_open":
                 service._incident(state, location, "DOORS_OPEN", True, "Device reports doors left open; inspect the unit")
             elif event == "unfreeze_check_required":
-                identifier = str(_id(state))
-                state["notifications"][identifier] = {
-                    "id": identifier, "alert_id": None, "device_id": device["id"],
-                    "location_id": location["id"], "type": event, "severity": "warning",
-                    "message": "Device reports stock during unfreeze; operator inspection required",
-                    "created_at": received, "status": "pending", "event_id": event_id,
-                }
+                service._incident(state, location, "UNFREEZE_CHECK", True,
+                                  "Device reports stock during unfreeze; operator inspection required")
             elif event == "power_outage":
                 device["last_status_at"] = body.ts
                 device["status"] = "power_outage"

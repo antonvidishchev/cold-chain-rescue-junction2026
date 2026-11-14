@@ -226,7 +226,12 @@ class CloudService:
                      if s["location_id"] == location["id"]]
             used = sum(s["units"] for s in stock)
             rng = self._range(state, location)
-            result.append({**location, "stock": stock, "used_units": used,
+            from app.cloud.display_status import latest_display_status
+            display_status, display_at = latest_display_status(
+                self.store.query("Events", location_id=location["id"]) if location.get("monitored", True) else [],
+                [a for a in state["alerts"].values() if a["location_id"] == location["id"]],
+                location["alarm_state"])
+            result.append({**location, "display_status": display_status, "display_status_at": display_at, "stock": stock, "used_units": used,
                 "free_units": location["capacity_units"] - used, "stock_present": self._stock_present(state, location),
                 "effective_range": {"min_c": rng.min_c, "max_c": rng.max_c},
                 "devices": [d for d in state["devices"].values() if d["location_id"] == location["id"] and d.get("active", True)]})
@@ -254,6 +259,7 @@ class CloudService:
         state["alerts"][str(identifier)] = alert
         state["notifications"][str(identifier)] = {"id": str(identifier), "alert_id": identifier,
             "location_id": location["id"], "type": kind, "message": message,
+                        "severity": "warning" if kind == "UNFREEZE_CHECK" else "critical",
             "created_at": created, "status": "pending"}
         _timeline(state, location["id"], "incident", alert_id=identifier, incident_type=kind)
 
@@ -262,7 +268,7 @@ class CloudService:
         active = {a["type"] for a in state["alerts"].values()
                   if a["location_id"] == location["id"] and a.get("recovered_at") is None
                   and a["status"] != "resolved_by_user"}
-        location["alarm_state"] = next((kind for kind in ("POWER_LOSS", "FAILURE", "OFFLINE", "OVERHEAT", "EXCURSION", "RAPID_RISE", "TAMPER", "DOORS_OPEN")
+        location["alarm_state"] = next((kind for kind in ("POWER_LOSS", "FAILURE", "OFFLINE", "OVERHEAT", "EXCURSION", "RAPID_RISE", "TAMPER", "DOORS_OPEN", "UNFREEZE_CHECK")
                                        if kind in active), "NORMAL")
 
     def _evaluate_temperature(self, state: dict, device: dict, location: dict) -> None:
@@ -347,6 +353,9 @@ class CloudService:
                         if "fridge_display_temp_c" in reading:
                             location["reported_temp_c"] = reading["fridge_display_temp_c"]
                             location["reported_temp_at"] = stamp(when)
+                    if envelope is not None and envelope["data"].get("alarm") == "unfreeze":
+                        self._incident(state, location, "UNFREEZE_CHECK", True,
+                                       "Device reports stock during unfreeze; operator inspection required")
                     self._evaluate_temperature(state, device, location)
             elif not stale:
                 device[latest_field] = stamp(when)

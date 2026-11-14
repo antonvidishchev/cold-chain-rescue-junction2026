@@ -36,7 +36,7 @@ describe('public dashboard', () => {
       expect(screen.getByRole('heading', { name: new RegExp(site.id) })).toBeInTheDocument();
       expect(screen.queryByText('Sensor temperature')).not.toBeInTheDocument();
       expect(screen.queryByText(/Reported on|Waiting for the first temperature/)).not.toBeInTheDocument();
-      expect(screen.queryByRole('heading', { name: 'Device event reports' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: 'Latest device events' })).not.toBeInTheDocument();
     }
     expect(screen.getByText('172 km')).toBeInTheDocument();
     expect(screen.getByText('120 min')).toBeInTheDocument();
@@ -93,7 +93,7 @@ describe('public dashboard', () => {
       return undefined;
     });
     vi.stubGlobal('fetch', fetcher); render(<App />);
-    const events = await screen.findByRole('region', { name: 'Device event reports' });
+    const events = await screen.findByRole('region', { name: 'Latest device events' });
     expect(await within(events).findByText('Reported mismatch')).toBeInTheDocument();
     expect(within(events).getByText('5.0° C')).toBeInTheDocument();
     expect(within(events).getAllByText('Code H1')).toHaveLength(2);
