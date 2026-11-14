@@ -177,6 +177,18 @@ def test_healthy_fridge_mirrors_sensor(wd):
     assert wd.alarm is None
 
 
+@pytest.mark.parametrize("offset, shown", [(-0.5, 4.0), (-0.4, 4.5), (0.0, 4.5), (0.4, 4.5), (0.5, 5.0)])
+def test_fridge_screen_snaps_to_4_5_in_demo_band(wd, offset, shown):
+    wd.update_reading(4.5, 40.0)
+    wd.fridge_offset_c = offset
+    assert wd.fridge_state()["display_temp_c"] == pytest.approx(shown)
+
+
+def test_hacked_fridge_screen_is_not_snapped(wd):
+    wd.handle("hack_fridge")
+    assert wd.fridge_state()["display_temp_c"] == 4.0
+
+
 def test_healthy_fridge_usually_reads_a_little_lower(wd):
     diffs = []
     for _ in range(500):

@@ -27,8 +27,8 @@ const int KNOB_CW_SIGN = 1;
 const unsigned long KNOB_POLL_MS = 50;
 const int16_t KNOB_MAX_STEP = 8;  // detents per poll; more means a glitch
 // DEMO ONLY: added to every Thermo reading so a room-temperature board looks
-// like a fridge (~25 C -> ~4 C). Set to 0.0 for real readings.
-const float DEMO_TEMP_OFFSET_C = -21.0;
+// like a fridge (~25 C -> ~7 C). Set to 0.0 for real readings.
+const float DEMO_TEMP_OFFSET_C = -18.0;
 
 // ---------------------------------------------------------------- matrix
 const uint8_t ROWS = 8;
