@@ -91,7 +91,7 @@ flowchart LR
 
 | Part | Tech | Role |
 | --- | --- | --- |
-| `device/coldchain-watchdog` | Arduino App Lab app for **Uno Q** (sketch + Python) | Reads the sensor, runs the local alarm rule, drives the buzzer, sends telemetry, polls for commands |
+| `device/coldchain-watchdog` | Arduino App Lab app for **Uno Q** (sketch + Python, WebUI brick) | Holds the fridge inventory and nearby clinics, reads the sensor, reacts to simulated events with buzzer patterns and LED-matrix messages, serves a REST API on port 7000, reports events through backend stubs |
 | `backend` | Python 3.12+, **FastAPI**, SQLModel/SQLite | Collects telemetry, evaluates thresholds and tamper rules, manages alerts, inventory, capacity and transfer plans, pushes live updates |
 | `frontend` | **React + Vite + TypeScript**, Tailwind, Recharts | Dashboard (fridges, live temperature, alerts, transfer plans) and the simulator panel used in the demo |
 
@@ -130,9 +130,13 @@ Full version: [docs/demo-script.md](docs/demo-script.md).
 
 ```
 device/coldchain-watchdog/   Arduino App Lab app for the Uno Q
-  app.yaml                   App Lab manifest
-  sketch/                    STM32 sketch: Modulino Thermo + Buzzer, Bridge RPC
-  python/                    Linux-side app: alarm rule, telemetry, command polling
+  app.yaml                   App Lab manifest (WebUI brick, port 7000)
+  sketch/                    STM32 sketch: Modulino Thermo, buzzer patterns, LED matrix
+  python/main.py             Linux-side app: REST API, Bridge calls, event loop
+  python/logic.py            command handling, safe window, clinic selection, protocol
+  python/backend_stub.py     calls to the future backend (log only by default)
+  python/data/               medicines.json (inventory), clinics.json (main site + 10 clinics)
+  tests/                     unit tests for logic.py
 backend/                     FastAPI service
   app/api/                   HTTP + WebSocket routes
   app/domain/                thresholds, tamper check, alarm state machine, transfer planner
@@ -140,8 +144,9 @@ backend/                     FastAPI service
   seed/                      demo products, storage locations, stock
   tests/
 frontend/                    React dashboard + simulator
-docs/                        architecture, demo script
+docs/                        architecture, demo script, operator runbook (runbook.md)
 scripts/dev.sh               run backend + frontend together
+scripts/deploy-device.sh     deploy the watchdog app to the Uno Q over adb
 ```
 
 ## Quick start
@@ -150,11 +155,96 @@ scripts/dev.sh               run backend + frontend together
 
 - Python 3.12+ and [uv](https://docs.astral.sh/uv/)
 - Node.js 20+ and npm
-- For the device: an Arduino **Uno Q**, Modulino Thermo and Modulino Buzzer
-  (chained over Qwiic), and [Arduino App Lab](https://docs.arduino.cc/software/app-lab/)
-  or `arduino-app-cli` on the board
+- An Arduino **Uno Q** with Modulino Thermo and Modulino Buzzer chained on the
+  Qwiic connector, connected to your computer over USB and to the same
+  network as your computer (Wi-Fi)
+- `adb` on your computer (`brew install android-platform-tools` on macOS).
+  `arduino-app-cli` is already installed on the Uno Q.
 
-### Backend
+Check that the board is visible:
+
+```bash
+adb devices
+```
+
+### 1. Deploy the watchdog to the Uno Q
+
+```bash
+./scripts/deploy-device.sh
+```
+
+The script stops any other running app, copies `device/coldchain-watchdog`
+to `/home/arduino/ArduinoApps/coldchain-watchdog`, compiles and flashes the
+sketch, starts the Python app and prints the board's API address, for
+example `http://10.0.41.103:7000/api/state`. The board beeps once when the
+sketch starts and the LED matrix shows the temperature.
+
+To also follow the logs (including the payloads of the backend stubs):
+
+```bash
+./scripts/deploy-device.sh logs
+```
+
+Later, to see the logs without redeploying:
+
+```bash
+adb shell arduino-app-cli app logs user:coldchain-watchdog --follow
+```
+
+### 2. Run the dashboard
+
+```bash
+cd frontend
+npm install
+echo "VITE_BOARD_URL=http://<board-ip>:7000" > .env.local
+npm run dev
+```
+
+Open <http://localhost:5173>. The **Fridge watchdog** tab talks directly to
+the board: live temperature, inventory, nearby clinics, alarms and the
+simulation buttons. If `VITE_BOARD_URL` is not set, the dashboard uses
+`http://10.0.41.103:7000`.
+
+The **Backend dashboard (legacy)** tab needs the FastAPI backend (see
+below). The watchdog does not need it.
+
+### 3. Test the scenarios
+
+Use the buttons in the dashboard, or call the board API directly:
+
+```bash
+curl -X POST http://<board-ip>:7000/api/command/power_outage
+```
+
+| Command | Fridge stocked | Fridge empty |
+| --- | --- | --- |
+| `unfreeze` (suspicious unfreeze) | Blocked: two groups of three beeps, matrix shows a warning sign and `CHECK`, operator notification stub | Allowed, only logged |
+| `power_outage` | Two-tone siren for 10 s, then a chirp every 5 s; matrix shows a warning sign and the protocol (`P1`…`P4`); dashboard shows the safe window countdown and clinics to call | Nothing to do |
+| `doors_open` | `CLOSE THE DOORS` marquee and seatbelt-style chime for 15 s | same |
+| `empty` / `fill` | Empty the fridge or restore the full inventory | same |
+| `reset` | Operator clears alarms, buzzer stops, matrix shows the temperature | same |
+
+The protocol numbers refer to the printed [operator runbook](docs/runbook.md).
+With the full demo inventory a power outage gives **P1**: the stock is safe
+for 60 min and 4 clinics are reachable (drive time + 15 min packing).
+
+Other read-only endpoints: `GET /api/state`, `GET /api/inventory`,
+`GET /api/clinics`.
+
+The sensor is not inside a real fridge, so the room temperature it measures
+is shown and reported, but it does not trigger alarms.
+
+### Unit tests
+
+```bash
+uv run --no-project --with pytest pytest device/coldchain-watchdog/tests
+```
+
+```bash
+cd backend && uv run pytest
+```
+
+### Backend (optional, legacy dashboard)
 
 ```bash
 cd backend
@@ -163,49 +253,35 @@ uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 API docs: <http://localhost:8000/docs>. The demo data in `seed/` loads on
-first start.
+first start. `./scripts/dev.sh` runs the backend and the dashboard together.
 
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Dashboard: <http://localhost:5173>. Set `VITE_API_URL` if the backend is not
-on `http://localhost:8000`.
-
-### Both at once
-
-```bash
-./scripts/dev.sh
-```
-
-### Device (Arduino Uno Q)
-
-1. Plug the Modulino Thermo and Buzzer into the Uno Q's Qwiic connector.
-2. Copy `device/coldchain-watchdog` into your App Lab apps folder on the
-   board (or open it in App Lab).
-3. Set the backend URL and device id in `app.yaml` / environment
-   (`COLDCHAIN_API_URL`, `COLDCHAIN_DEVICE_ID`). The board and the laptop
-   running the backend must be on the same network.
-4. Run the app from App Lab, or with
-   `arduino-app-cli app start ~/ArduinoApps/coldchain-watchdog`.
-
-No board? The simulator panel can post readings too, so the dashboard runs
-without hardware.
+The watchdog does not call this backend yet: every event goes through
+`device/coldchain-watchdog/python/backend_stub.py`, which logs the JSON
+payload. Set `BACKEND_ENABLED=1` and `COLDCHAIN_API_URL` on the device to
+also POST it once the backend has matching endpoints.
 
 ### Configuration
 
 | Variable | Where | Default | Meaning |
 | --- | --- | --- | --- |
+| `VITE_BOARD_URL` | frontend | `http://10.0.41.103:7000` | Watchdog API on the Uno Q |
+| `VITE_API_URL` | frontend | `http://localhost:8000` | Backend URL (legacy tab) |
+| `BACKEND_ENABLED` | device | `0` | `1` = backend stubs also POST their payloads |
+| `COLDCHAIN_API_URL` | device | `http://localhost:8000` | Backend URL as seen from the board |
+| `COLDCHAIN_DEVICE_ID` | device | `unoq-fridge-a` | Device identity |
 | `COLDCHAIN_DB_URL` | backend | `sqlite:///./coldchain.db` | Database |
 | `COLDCHAIN_CORS_ORIGINS` | backend | `http://localhost:5173` | Allowed dashboard origins |
 | `COLDCHAIN_TAMPER_TOLERANCE_C` | backend | `2.0` | Allowed device-vs-fridge difference |
-| `VITE_API_URL` | frontend | `http://localhost:8000` | Backend URL |
-| `COLDCHAIN_API_URL` | device | `http://192.168.1.10:8000` | Backend URL as seen from the board |
-| `COLDCHAIN_DEVICE_ID` | device | `unoq-fridge-a` | Device identity |
+
+### Troubleshooting
+
+- **`adb devices` shows nothing:** reconnect the USB-C cable; use a data cable.
+- **Dashboard says the board is unreachable:** check the IP printed by the
+  deploy script and that your computer is on the same network.
+- **Deploy fails with "port 7000 is declared by multiple sources":** don't add
+  7000 to `ports` in `app.yaml`; the WebUI brick declares it.
+- **No temperature / no beeps:** check the Qwiic chain. The sketch uses
+  `Modulino.begin(Wire1)`, which is the Qwiic bus on the Uno Q.
 
 ## Weekend scope
 
